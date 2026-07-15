@@ -5,13 +5,10 @@
 //! using the Linux dev implementation (`DevFileCredentialStore`) on any platform.
 //!
 //! This is the portable counterpart to `credential_store_test.rs` (which tests the real
-//! DPAPI path, Windows-only). The trait contract — NotFound / Corrupt / successful
-//! round-trip — is provable here without DPAPI.
+//! DPAPI path, Windows-only). The trait contract — NotFound / successful round-trip —
+//! is provable here without DPAPI.
 //!
 //! Added during cross-platform re-plan (2026-07-15, not in the original VALIDATION map).
-//! Filled in 01-02/T2.
-//!
-//! **Wave-0 scaffold** — tests are `#[ignore]` until 01-02/T2 fills in assertions.
 
 use brevly_print::credential_store::{credential_store, CredentialError, CredentialStore};
 
@@ -19,10 +16,7 @@ use brevly_print::credential_store::{credential_store, CredentialError, Credenti
 ///
 /// On Linux: uses `DevFileCredentialStore` (plaintext, DEV/TEST ONLY).
 /// On Windows: uses `DpapiCredentialStore` (DPAPI encrypted).
-///
-/// Filled in 01-02/T2.
 #[test]
-#[ignore = "implementation pending 01-02/T2"]
 fn test_trait_contract_round_trip() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = credential_store(dir.path());
@@ -35,9 +29,7 @@ fn test_trait_contract_round_trip() {
 /// Verify that load() returns `CredentialError::NotFound` when no credential exists.
 ///
 /// Portable: works on Linux (DevFile) and Windows (DPAPI).
-/// Filled in 01-02/T2.
 #[test]
-#[ignore = "implementation pending 01-02/T2"]
 fn test_trait_contract_not_found() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = credential_store(dir.path());

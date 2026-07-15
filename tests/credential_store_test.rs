@@ -8,15 +8,13 @@
 //!
 //! **NOT compiled or run on Linux** (cfg-gate at the top of this file).
 //!
-//! **Wave-0 scaffold** — tests are `#[ignore]` until 01-02/T2 fills in assertions.
+//! T-1-01 (threat mitigation): proves DPAPI Scope::User round-trip and Corrupt error on
+//! bad blob — the exact paths Phase 2 uses to handle credential failure without panicking.
 
 use brevly_print::credential_store::{credential_store, CredentialError, CredentialStore};
 
 /// Verify a full DPAPI encrypt → write → read → decrypt round-trip.
-///
-/// Filled in 01-02/T2.
 #[test]
-#[ignore = "implementation pending 01-02/T2"]
 fn test_round_trip() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = credential_store(dir.path());
@@ -27,10 +25,7 @@ fn test_round_trip() {
 }
 
 /// Verify that a missing credential file returns `CredentialError::NotFound`.
-///
-/// Filled in 01-02/T2.
 #[test]
-#[ignore = "implementation pending 01-02/T2"]
 fn test_missing_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = credential_store(dir.path());
@@ -44,9 +39,8 @@ fn test_missing_file() {
 
 /// Verify that corrupt bytes in credential.bin return `CredentialError::Corrupt`.
 ///
-/// Filled in 01-02/T2.
+/// Proves T-1-01: undecryptable DPAPI blob → typed error, never panic.
 #[test]
-#[ignore = "implementation pending 01-02/T2"]
 fn test_corrupt_blob() {
     let dir = tempfile::tempdir().expect("tempdir");
     let credential_path = dir.path().join("credential.bin");
