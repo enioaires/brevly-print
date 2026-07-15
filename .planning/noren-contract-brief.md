@@ -31,21 +31,30 @@ Pusher, e o agente busca os bytes por HTTP e imprime. Nenhuma lógica de templat
 
 O contrato `/api/agent/*` dedicado ao agente + a renderização ESC/POS rodando **no servidor**.
 
-## ⛔ ESTA FASE É PURAMENTE ADITIVA — NÃO remover o QZ Tray
+## Migração completa QZ Tray → Brevly Print (NÃO há cliente em produção)
 
-O QZ Tray está **imprimindo em produção agora** (cliente-0 Haru; Phase 36 "Printing go-live
-hardening" shipada, Phase 37 endurecendo o fluxo). O QZ toca o PDV inteiro: `src/lib/pdv/print.ts`
-e afins, `PrinterWizard/PrinterSelector/QzTrayStatusBadge.svelte`, `admin/pdv/+page.svelte`,
-`admin/settings/printer/`, `api/qz/cert`.
+Decisão do dono (2026-07-15): **ninguém está em produção no QZ ainda.** Logo, **não** manter os dois
+caminhos nem compatibilidade — fazer o cutover completo numa fase coesa do Noren que remove o QZ e
+constrói o novo contrato de uma vez (evita um estado quebrado no meio: sem QZ e sem agente).
 
-- **NÃO** remover/alterar o fluxo QZ nesta fase. QZ e Brevly Print **convivem** durante a transição.
-- **NÃO** apagar/recriar a página de setup de impressora do Noren — a tela nova de ativação/impressora
-  vive **no agente Rust** (Fase 2 do Brevly Print, egui), não no Noren. No Noren não há "página nova"
-  a criar; a antiga só é **removida numa fase futura**.
-- A **aposentadoria do QZ é uma fase Noren separada e futura**, feita só **depois** do cutover
-  validado (Brevly Print instalado em campo, assinado, SmartScreen amadurecido ~2-6 semanas,
-  imprimindo confiável). Construir o novo é aditivo/seguro; remover o antigo é destrutivo/arriscado —
-  não misturar na mesma fase.
+**Remover (fluxo QZ)** — confirmar a lista exata in-session:
+- `src/lib/pdv/print.ts` e correlatos (`print-status.ts`, `printer-status.ts`, `print-error.ts`)
+- componentes `PrinterWizard.svelte`, `PrinterSelector.svelte`, `QzTrayStatusBadge.svelte`
+- página `src/routes/admin/settings/printer/` (setup do QZ)
+- endpoint `src/routes/api/qz/cert/+server.ts` (e `sign`) e o tipo `src/lib/types/qz-tray.d.ts`
+
+**Religar (impressão deixa de ser disparada pelo cliente):** nos pontos de UI que hoje chamam
+impressão via QZ (`admin/pdv/+page.svelte`, `admin/pdv/novo/+page.svelte`, `admin/caixa/+page.svelte`,
+`HistoricoCaixasTab.svelte`), **remover a chamada de print do cliente**. No modelo Brevly Print a
+impressão vira um **efeito server-side da transição de status**: o servidor grava o job em
+`agent_print_jobs` e emite o evento Pusher `{jobId, type}`. O browser não dispara mais nada.
+
+**Sobrevive (migra pro servidor):** só `src/lib/utils/ticket.ts` (+ `ticket.test.ts`) — deixa de rodar
+no cliente e passa a gerar os bytes ESC/POS no servidor pro endpoint `/bytes`, preservando ISO-8859-1.
+
+**Sem página de impressora no Noren depois disso:** a tela de ativação/seleção de impressora vive
+**no agente Rust** (Fase 2 do Brevly Print, egui). O Noren só ganha a validação de serial (`activate`)
+e, futuramente (v2), um toggle por tipo de impressão no dashboard (PREF-01).
 
 ---
 
@@ -108,10 +117,12 @@ Nas 3 transições de impressão, criar a linha em `agent_print_jobs` e disparar
 4. `GET /jobs/pending`  → destrava **Fase 6 (Resiliência)**
 5. `GET /version` + hosting  → destrava **Fase 7 (Auto-update)**
 
-## ⚠️ Atenção — conflito de código em andamento
-Uma fase de impressão do Noren (`confiabilidade-e-fluxo-de-impressao`, ~Phase 37) estaria mexendo
-em `buildDespachoTicket` **agora**. **Estabilize essa fase antes** de iniciar a migração ESC/POS
-server-side — senão o mesmo builder é editado em duas frentes. Confirmar com `/gsd:progress` no Noren.
+## ⚠️ Atenção — fase de impressão em andamento no Noren
+Há indícios de uma fase de impressão do Noren em execução (`confiabilidade-e-fluxo-de-impressao`,
+~Phase 37) mexendo em `buildDespachoTicket`/`ticket.ts` — o mesmo código que esta migração absorve.
+Como o cutover é completo, **reconcilie com o agente do Noren** se a nova fase deve **suceder,
+reaproveitar ou substituir** essa Phase 37, em vez de rodar em paralelo sobre o mesmo `ticket.ts`.
+Confirmar o estado real com `/gsd:progress` no Noren antes de planejar.
 
 ## Como o trabalho flui entre os dois repos
 - Cada sessão GSD só conhece o próprio `.planning/`. O agente do Noren **não** vê o roadmap do
