@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Foundation + Thread Model Spike** - Prove `tao` + raw `egui` integration; initialize SQLite schema and DPAPI infra
+- [ ] **Phase 1: Foundation + Thread Model Spike** - Prove the `winit 0.30` + raw `egui` (egui-winit + egui-wgpu) event-loop integration; initialize SQLite schema (rusqlite_migration v1) and DPAPI credential infra
 - [ ] **Phase 2: Activation** - One-time activation window with serial validation, printer selection, DPAPI credential storage, and autostart registration
 - [ ] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer
 - [ ] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic
@@ -31,7 +31,12 @@
   2. SQLite `state.db` initializes at `%APPDATA%\BrevlyPrint\state.db` with tables `config`, `printed_jobs`, and `retry_queue` on first run
   3. DPAPI `credential.bin` can be written (Scope::User encrypt) and read back; a corrupted or missing file returns a `CredentialError` rather than panicking
   4. The Cargo.toml compiles a Windows target binary with the full dependency set (winit, tray-icon, egui/egui-winit/egui-wgpu, wgpu, tokio, reqwest rustls, rusqlite bundled + rusqlite_migration, windows crate, serialport, auto-launch, velopack, tauri-winrt-notification, windows-dpapi) — verified versions per Phase 1 RESEARCH.md §Standard Stack
-**Plans**: TBD
+**Plans**: 3 plans (3 waves)
+
+Plans:
+- [ ] 01-01-PLAN.md — Cargo lib+bin scaffold, full v1 dep set (verified versions), %APPDATA% init, Wave 0 test scaffolds + Windows CI gate
+- [ ] 01-02-PLAN.md — Persistence slice: rusqlite_migration v1 schema (3 tables) + ConfigStore, DPAPI CredentialStore with typed non-panic errors
+- [ ] 01-03-PLAN.md — winit 0.30 ApplicationHandler + raw egui spike window (SC-1), lib startup wiring, go/no-go decision (SPIKE-NOTES.md)
 
 ### Phase 2: Activation
 **Goal**: Users (restaurant owners) can install the agent, enter a serial number, select a printer, test-print, and save — resulting in a bound, autostarting agent ready for operation
@@ -120,7 +125,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Thread Model Spike | 0/0 | Not started | - |
+| 1. Foundation + Thread Model Spike | 0/3 | Not started | - |
 | 2. Activation | 0/0 | Not started | - |
 | 3. Tray + Runtime + First Distributable | 0/0 | Not started | - |
 | 4. Pusher Event Stream | 0/0 | Not started | - |
