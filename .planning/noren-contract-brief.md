@@ -31,6 +31,22 @@ Pusher, e o agente busca os bytes por HTTP e imprime. Nenhuma lógica de templat
 
 O contrato `/api/agent/*` dedicado ao agente + a renderização ESC/POS rodando **no servidor**.
 
+## ⛔ ESTA FASE É PURAMENTE ADITIVA — NÃO remover o QZ Tray
+
+O QZ Tray está **imprimindo em produção agora** (cliente-0 Haru; Phase 36 "Printing go-live
+hardening" shipada, Phase 37 endurecendo o fluxo). O QZ toca o PDV inteiro: `src/lib/pdv/print.ts`
+e afins, `PrinterWizard/PrinterSelector/QzTrayStatusBadge.svelte`, `admin/pdv/+page.svelte`,
+`admin/settings/printer/`, `api/qz/cert`.
+
+- **NÃO** remover/alterar o fluxo QZ nesta fase. QZ e Brevly Print **convivem** durante a transição.
+- **NÃO** apagar/recriar a página de setup de impressora do Noren — a tela nova de ativação/impressora
+  vive **no agente Rust** (Fase 2 do Brevly Print, egui), não no Noren. No Noren não há "página nova"
+  a criar; a antiga só é **removida numa fase futura**.
+- A **aposentadoria do QZ é uma fase Noren separada e futura**, feita só **depois** do cutover
+  validado (Brevly Print instalado em campo, assinado, SmartScreen amadurecido ~2-6 semanas,
+  imprimindo confiável). Construir o novo é aditivo/seguro; remover o antigo é destrutivo/arriscado —
+  não misturar na mesma fase.
+
 ---
 
 ## Escopo da fase Noren — contrato `/api/agent/*`
