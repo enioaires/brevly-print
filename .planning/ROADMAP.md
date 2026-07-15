@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Foundation + Thread Model Spike** - Prove the `winit 0.30` + raw `egui` (egui-winit + egui-wgpu) event-loop integration; initialize SQLite schema (rusqlite_migration v1) and DPAPI credential infra
+- [x] **Phase 1: Foundation + Thread Model Spike** - Prove the `winit 0.30` + raw `egui` (egui-winit + egui-wgpu) event-loop integration; initialize SQLite schema (rusqlite_migration v1) and DPAPI credential infra
 - [ ] **Phase 2: Activation** - One-time activation window with serial validation, printer selection, DPAPI credential storage, and autostart registration
 - [ ] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer
 - [ ] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic
@@ -34,7 +34,7 @@
 **Plans**: 3 plans (replanned 2026-07-15 for cross-platform)
 - [x] 01-01-PLAN.md — Cross-platform Cargo scaffold (target-gated deps), app-dir init, CredentialStore trait + cfg impls, Wave-0 test scaffolds, ubuntu+windows CI matrix
 - [x] 01-02-PLAN.md — ConfigStore (rusqlite_migration v1, 3 tables, get/set) + both credential impls; Linux-provable contract tests + Windows DPAPI tests
-- [ ] 01-03-PLAN.md — Walking skeleton: winit 0.30 ApplicationHandler + raw egui window wiring the stores end-to-end (SC-1), human-verify checkpoint
+- [x] 01-03-PLAN.md — Walking skeleton: winit 0.30 ApplicationHandler + raw egui window wiring the stores end-to-end (SC-1), human-verify checkpoint APPROVED (Linux + Windows)
 
 ### Phase 2: Activation
 **Goal**: Users (restaurant owners) can install the agent, enter a serial number, select a printer, test-print, and save — resulting in a bound, autostarting agent ready for operation
@@ -123,7 +123,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Thread Model Spike | 2/3 | In Progress|  |
+| 1. Foundation + Thread Model Spike | 3/3 | Complete | 2026-07-15 |
 | 2. Activation | 0/0 | Not started | - |
 | 3. Tray + Runtime + First Distributable | 0/0 | Not started | - |
 | 4. Pusher Event Stream | 0/0 | Not started | - |
