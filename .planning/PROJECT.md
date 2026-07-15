@@ -54,7 +54,7 @@ comanda perdida, mesmo com impressora ou internet fora do ar.
 
 ## Context
 
-**Origem:** substitui a dependência do QZ Tray no Noren (~/repos/personal/noren), que tem
+**Origem:** substitui a dependência do QZ Tray no Noren (~/repos/brevly/noren), que tem
 limitações no plano gratuito. Brevly é o nome da empresa; este é um repo novo dentro de
 ~/repos/brevly.
 

@@ -87,7 +87,7 @@ Excluídos explicitamente para evitar scope creep.
 
 ## External Dependencies (Noren backend — repo separado)
 
-Estas mudanças vivem em `~/repos/personal/noren` e são **pré-requisito** para as fases de
+Estas mudanças vivem em `~/repos/brevly/noren` e são **pré-requisito** para as fases de
 integração. O roadmap deve sequenciar as fases do agente considerando que o endpoint
 correspondente exista (ou seja construído em paralelo) antes da fase que o consome.
 

@@ -8,7 +8,7 @@ comanda perdida, mesmo com impressora ou internet fora do ar.
 
 **Stack:** Rust nativo (Windows-only) — tao + tray-icon + egui (raw) + tokio + reqwest (rustls) + rusqlite (bundled) + windows crate (WritePrinter RAW) + serialport + auto-launch + velopack + tauri-winrt-notification + windows-dpapi
 
-**Cross-repo dependency:** Noren backend (`~/repos/personal/noren`) must implement `/api/agent/*` contract before phases 2, 4, 5, 6, 7 can be completed. Server-side ESC/POS rendering is the longest-lead Noren item — gates Phase 5.
+**Cross-repo dependency:** Noren backend (`~/repos/brevly/noren`) must implement `/api/agent/*` contract before phases 2, 4, 5, 6, 7 can be completed. Server-side ESC/POS rendering is the longest-lead Noren item — gates Phase 5.
 
 ## Current Position
 

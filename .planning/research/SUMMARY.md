@@ -157,7 +157,7 @@ The agent splits into two thread domains communicating via bounded channels. The
 
 ## Agent ↔ Noren API Contract (First-Class Dependency)
 
-**This is the most important cross-cutting concern.** The agent cannot do anything useful without Noren backend changes. These live in a separate repo (`~/repos/personal/noren`) and are a prerequisite that must be tracked as a parallel workstream.
+**This is the most important cross-cutting concern.** The agent cannot do anything useful without Noren backend changes. These live in a separate repo (`~/repos/brevly/noren`) and are a prerequisite that must be tracked as a parallel workstream.
 
 Every integration feature is BLOCKED until the corresponding Noren API exists.
 
