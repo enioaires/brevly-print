@@ -33,7 +33,7 @@
   4. Cargo compiles the **portable core on `x86_64-unknown-linux-gnu`** AND the **full v1 dep set on `x86_64-pc-windows-msvc`** (Windows-only crates — `windows`, `windows-dpapi`, `tray-icon`, `printers`, `auto-launch`, `velopack`, `tauri-winrt-notification` — under `[target.'cfg(windows)'.dependencies]`) — verified versions per Phase 1 RESEARCH.md §Standard Stack
 **Plans**: 3 plans (replanned 2026-07-15 for cross-platform)
 - [x] 01-01-PLAN.md — Cross-platform Cargo scaffold (target-gated deps), app-dir init, CredentialStore trait + cfg impls, Wave-0 test scaffolds, ubuntu+windows CI matrix
-- [ ] 01-02-PLAN.md — ConfigStore (rusqlite_migration v1, 3 tables, get/set) + both credential impls; Linux-provable contract tests + Windows DPAPI tests
+- [x] 01-02-PLAN.md — ConfigStore (rusqlite_migration v1, 3 tables, get/set) + both credential impls; Linux-provable contract tests + Windows DPAPI tests
 - [ ] 01-03-PLAN.md — Walking skeleton: winit 0.30 ApplicationHandler + raw egui window wiring the stores end-to-end (SC-1), human-verify checkpoint
 
 ### Phase 2: Activation
@@ -123,7 +123,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation + Thread Model Spike | 1/3 | In Progress|  |
+| 1. Foundation + Thread Model Spike | 2/3 | In Progress|  |
 | 2. Activation | 0/0 | Not started | - |
 | 3. Tray + Runtime + First Distributable | 0/0 | Not started | - |
 | 4. Pusher Event Stream | 0/0 | Not started | - |
