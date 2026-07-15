@@ -20,7 +20,7 @@ winit       = "0.30.13"
 egui        = "0.35"
 egui-winit  = "0.35"
 egui-wgpu   = { version = "0.35", features = ["winit"] }
-wgpu        = { version = "29", default-features = false, features = ["wgsl", "dx12"] }
+wgpu        = { version = "29", default-features = false, features = ["wgsl", "dx12", "vulkan", "metal", "gles"] }
 
 # Persistence (Phase 1)
 rusqlite           = { version = "0.40", features = ["bundled"] }
