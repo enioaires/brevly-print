@@ -93,15 +93,15 @@ correspondente exista (ou seja construído em paralelo) antes da fase que o cons
 
 | Mudança no Noren | Habilita | Bloqueia fase (agente) |
 |---|---|---|
-| Renderização de ESC/POS server-side (migrar `buildTicket`/`buildDespachoTicket`/`buildClosingTicket` de `ticket.ts`), preservando ISO-8859-1 | Agente receber bytes | Pipeline de impressão |
-| Tabelas `agent_serials` + `agent_print_jobs` | Serial auth + fila | Ativação, Pipeline |
-| `POST /api/agent/activate` (valida serial, emite agentToken, suporta re-ativação) | Ativação | Ativação |
-| `POST /api/agent/pusher/auth` (HMAC + 403 se canal ≠ tenant do token) | Subscrição Pusher | Eventos |
-| Emissão de evento Pusher leve `{jobId, type}` em pedido/despacho/fechamento | Receber eventos | Eventos |
-| `GET /api/agent/jobs/{jobId}/bytes` (base64 ESC/POS) | Buscar job | Pipeline |
-| `POST /api/agent/jobs/{jobId}/ack` (idempotente, 409 no repeat) | Ack + dedup | Pipeline |
-| `GET /api/agent/jobs/pending` (não-ackados, ASC, máx 100) | Pull offline | Resiliência |
-| `GET /api/agent/version` (versão + downloadUrl + SHA256) + hosting do update | Auto-update | Distribuição |
+| Renderização de ESC/POS server-side (migrar `buildTicket`/`buildDespachoTicket`/`buildClosingTicket` de `ticket.ts`), preservando ISO-8859-1 | Agente receber bytes | Pipeline de impressão (Phase 5) |
+| Tabelas `agent_serials` + `agent_print_jobs` | Serial auth + fila | Ativação (Phase 2), Pipeline (Phase 5) |
+| `POST /api/agent/activate` (valida serial, emite agentToken, suporta re-ativação) | Ativação | Ativação (Phase 2) |
+| `POST /api/agent/pusher/auth` (HMAC + 403 se canal ≠ tenant do token) | Subscrição Pusher | Eventos (Phase 4) |
+| Emissão de evento Pusher leve `{jobId, type}` em pedido/despacho/fechamento | Receber eventos | Eventos (Phase 4) |
+| `GET /api/agent/jobs/{jobId}/bytes` (base64 ESC/POS) | Buscar job | Pipeline (Phase 5) |
+| `POST /api/agent/jobs/{jobId}/ack` (idempotente, 409 no repeat) | Ack + dedup | Pipeline (Phase 5) |
+| `GET /api/agent/jobs/pending` (não-ackados, ASC, máx 100) | Pull offline | Resiliência (Phase 6) |
+| `GET /api/agent/version` (versão + downloadUrl + SHA256) + hosting do update | Auto-update | Distribuição (Phase 7) |
 
 ## Traceability
 
@@ -109,13 +109,42 @@ Preenchido durante a criação do roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (a ser preenchido pelo roadmapper) | | |
+| ACT-01 | Phase 2 | Pending |
+| ACT-02 | Phase 2 | Pending |
+| ACT-03 | Phase 2 | Pending |
+| ACT-04 | Phase 2 | Pending |
+| ACT-05 | Phase 2 | Pending |
+| ACT-06 | Phase 2 | Pending |
+| ACT-07 | Phase 2 | Pending |
+| ACT-08 | Phase 2 | Pending |
+| RUN-01 | Phase 3 | Pending |
+| RUN-02 | Phase 3 | Pending |
+| RUN-03 | Phase 3 | Pending |
+| EVT-01 | Phase 4 | Pending |
+| EVT-02 | Phase 4 | Pending |
+| EVT-03 | Phase 4 | Pending |
+| PRT-01 | Phase 5 | Pending |
+| PRT-02 | Phase 5 | Pending |
+| PRT-03 | Phase 5 | Pending |
+| PRT-04 | Phase 5 | Pending |
+| PRT-05 | Phase 5 | Pending |
+| PRT-06 | Phase 5 | Pending |
+| PRT-07 | Phase 5 | Pending |
+| PRT-08 | Phase 5 | Pending |
+| PRT-09 | Phase 5 | Pending |
+| RES-01 | Phase 6 | Pending |
+| RES-02 | Phase 6 | Pending |
+| RES-03 | Phase 6 | Pending |
+| RES-04 | Phase 6 | Pending |
+| DIST-01 | Phase 3 | Pending |
+| DIST-02 | Phase 7 | Pending |
+| DIST-03 | Phase 7 | Pending |
 
 **Coverage:**
 - v1 requirements: 25 total
-- Mapped to phases: (a preencher)
-- Unmapped: (a preencher)
+- Mapped to phases: 25
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-15 after initial definition*
+*Last updated: 2026-07-15 after roadmap creation (traceability filled)*
