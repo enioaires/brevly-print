@@ -65,7 +65,7 @@ Progress: [░░░░░░░] 0/7 phases complete
 | Rust nativo (não Tauri) | Agente headless always-on; UI mínima não justifica webview; menor footprint |
 | Agente é spooler burro | Noren renderiza ESC/POS server-side; sem drift de layout/QR em Rust |
 | Pusher (evento) + HTTP (payload) + ack | Evita limite ~10KB do Pusher; dá ack de entrega e fila server-side para offline |
-| egui raw (NOT eframe::run_native()) | eframe + tao causam conflito de event loop Win32; spike obrigatório na Fase 1 |
+| egui raw sobre `winit 0.30` (NOT eframe, NOT tao) | eframe + event loop = conflito Win32 (C2). **Revisado 2026-07-15 pela pesquisa da Fase 1:** `winit 0.30` substitui `tao` — tao 0.35 usa a API antiga de closure, incompatível com `egui-winit 0.35` (exige `winit ^0.30.13` ApplicationHandler). `tray-icon 0.24` suporta winit direto; tao é fork do winit. Ver `01-RESEARCH.md`. |
 | Velopack para auto-update | Bootstrapper evita FILE_SHARING_VIOLATION no EXE em execução; fallback RunOnce documentado |
 | WritePrinter RAW (não escpos/CreateFile) | TM-T20X usa usbprint.sys; troca de driver WinUSB excluída do v1 |
 | Serial validado pelo Noren | Reusa auth/tenant existente; sem infra de licenciamento separada |

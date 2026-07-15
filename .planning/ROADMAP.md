@@ -27,10 +27,10 @@
 **Depends on**: Nothing
 **Requirements**: (none — pure technical spike; unblocks all v1 requirements)
 **Success Criteria** (what must be TRUE):
-  1. A minimal `tao::EventLoop` drives a raw `egui`-rendered window on Windows without a separate Win32 message loop (or the subprocess alternative is proven and documented as the Phase 2 approach)
+  1. A minimal `winit 0.30` `ApplicationHandler` event loop drives a raw `egui`-rendered window (`egui-winit` + `egui-wgpu`) on Windows without a separate Win32 message loop (or the subprocess alternative is proven and documented as the Phase 2 approach). *[Revised 2026-07-15: `winit 0.30` replaces `tao` — tao's old closure API is incompatible with current `egui-winit`; see Phase 1 RESEARCH.md.]*
   2. SQLite `state.db` initializes at `%APPDATA%\BrevlyPrint\state.db` with tables `config`, `printed_jobs`, and `retry_queue` on first run
   3. DPAPI `credential.bin` can be written (Scope::User encrypt) and read back; a corrupted or missing file returns a `CredentialError` rather than panicking
-  4. The Cargo.toml compiles a Windows target binary with the full dependency set (tao, tray-icon, egui, tokio, reqwest rustls, rusqlite bundled, windows crate, serialport, auto-launch, velopack, tauri-winrt-notification, windows-dpapi)
+  4. The Cargo.toml compiles a Windows target binary with the full dependency set (winit, tray-icon, egui/egui-winit/egui-wgpu, wgpu, tokio, reqwest rustls, rusqlite bundled + rusqlite_migration, windows crate, serialport, auto-launch, velopack, tauri-winrt-notification, windows-dpapi) — verified versions per Phase 1 RESEARCH.md §Standard Stack
 **Plans**: TBD
 
 ### Phase 2: Activation

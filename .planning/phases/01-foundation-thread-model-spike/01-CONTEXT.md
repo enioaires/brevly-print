@@ -64,9 +64,16 @@ spike + infra: no v1 REQUIREMENTS IDs map here; it unblocks all of them.
   more. (Planner: emit `SKELETON.md` per Walking-Skeleton mode.)
 
 ### egui Integration Risk & Fallback  *(Claude's discretion — owner said "você decide")*
-- **D-08:** Primary approach: **raw `egui` rendered inside the `tao::EventLoop`** via
-  `egui-wgpu` (DirectX backend — reliable across Windows GPU/driver setups).
-  `eframe::run_native()` is **prohibited** (dual Win32 event-loop conflict — pitfall C2).
+- **D-08 (REVISED 2026-07-15 after Phase 1 research — supersedes original `tao` choice):**
+  Primary approach: **raw `egui` rendered on the `winit 0.30` `ApplicationHandler` event
+  loop** via `egui-winit` + `egui-wgpu` (wgpu DX12/WARP backend — reliable on Windows and
+  headless CI). **`winit 0.30` replaces `tao`.** Reason: `tao 0.35` still uses the old
+  closure-based `EventLoop::run()` API, which is incompatible with `egui-winit 0.35` (it
+  requires `winit ^0.30.13`'s new `ApplicationHandler` trait). `tray-icon 0.24` supports
+  `winit 0.30` directly (official `winit.rs` example) with no runtime coupling to tao; tao
+  is itself a winit fork, so this moves to the upstream, better-supported path.
+  `eframe::run_native()` remains **prohibited** (pitfall C2). See
+  `01-RESEARCH.md` §Standard Stack and Patterns 1–2 for the verified crate combo + code.
 - **D-09:** **Timebox ~1–2 focused days** on the embedded approach. Bar to clear: a
   single interactive `egui` frame (text field + button reacting to input) rendering
   inside the `tao` loop on the Windows box.
@@ -120,15 +127,17 @@ spike + infra: no v1 REQUIREMENTS IDs map here; it unblocks all of them.
   top-level context.
 
 ### Cargo.toml Dependency Set
-- **D-19:** The **full v1 dependency set** must be present and compiling on the Windows
-  target from Phase 1 (success-criterion 4), even for crates not exercised until later
-  phases: `tao` 0.35, `tray-icon` 0.21, `egui` 0.31 + `egui-wgpu`, `tokio` 1.x,
-  `reqwest` 0.13 (`default-features = false`, `features = ["rustls-tls", "json"]`),
-  `rusqlite` 0.32 (`features = ["bundled"]`) + `rusqlite_migration`, `windows` 0.62
-  (`Win32_Graphics_Printing` + printing/DPAPI feature flags), `windows-dpapi`,
-  `serialport` 4.7, `printers` 0.2, `auto-launch` 0.5, `velopack`,
-  `tauri-winrt-notification` 0.5, `tokio-tungstenite` 0.26, `hmac`, `sha2`,
-  `thiserror`, `anyhow`. Exact patch versions pinned by the planner against crates.io.
+- **D-19 (versions REVISED 2026-07-15 after research):** The **full v1 dependency set**
+  must be present and compiling on the Windows target from Phase 1 (success-criterion 4),
+  even for crates not exercised until later phases. **The authoritative version table is
+  `01-RESEARCH.md` §Standard Stack** (all 24 crates verified on crates.io 2026-07-15) — the
+  planner MUST use those versions, NOT the stale ones originally listed here. Key changes
+  from the original: **`winit 0.30.13` replaces `tao`** (see D-08); `egui` 0.31→0.35 (+
+  `egui-winit`, `egui-wgpu`, `wgpu` 29); `tray-icon` 0.21→0.24; `rusqlite` 0.32→0.40 (+
+  `rusqlite_migration` 2.6, which requires rusqlite ≥0.40); `windows-dpapi` 0.2; `dirs` 6;
+  `tokio-tungstenite` 0.26→0.30; `auto-launch` 0.5→0.6; `printers` 0.2→2.3; `velopack`
+  0.0→1.2; `tauri-winrt-notification` 0.5→0.8. `reqwest` stays `default-features = false,
+  features = ["rustls-tls", "json"]`; `rusqlite` stays `features = ["bundled"]`.
 
 ### Claude's Discretion
 - Exact `egui`/`egui-wgpu`/`wgpu`/`glow` crate glue and window-creation boilerplate.
