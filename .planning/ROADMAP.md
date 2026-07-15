@@ -31,7 +31,10 @@
   2. SQLite `state.db` initializes with tables `config`, `printed_jobs`, `retry_queue` on first run at the per-platform app dir (`%APPDATA%\BrevlyPrint\` on Windows, `~/.local/share/BrevlyPrint/` on Linux via `dirs`); verified by `cargo test` on **both** platforms
   3. Credentials round-trip through a `CredentialStore` trait; missing/corrupt → typed `CredentialError` (never panics) on both impls. Windows impl uses DPAPI `Scope::User` (real round-trip proven on Windows); a Linux dev impl exists so the trait/error contract tests pass on Linux
   4. Cargo compiles the **portable core on `x86_64-unknown-linux-gnu`** AND the **full v1 dep set on `x86_64-pc-windows-msvc`** (Windows-only crates — `windows`, `windows-dpapi`, `tray-icon`, `printers`, `auto-launch`, `velopack`, `tauri-winrt-notification` — under `[target.'cfg(windows)'.dependencies]`) — verified versions per Phase 1 RESEARCH.md §Standard Stack
-**Plans**: TBD (replanned 2026-07-15 for cross-platform — see phase dir)
+**Plans**: 3 plans (replanned 2026-07-15 for cross-platform)
+- [ ] 01-01-PLAN.md — Cross-platform Cargo scaffold (target-gated deps), app-dir init, CredentialStore trait + cfg impls, Wave-0 test scaffolds, ubuntu+windows CI matrix
+- [ ] 01-02-PLAN.md — ConfigStore (rusqlite_migration v1, 3 tables, get/set) + both credential impls; Linux-provable contract tests + Windows DPAPI tests
+- [ ] 01-03-PLAN.md — Walking skeleton: winit 0.30 ApplicationHandler + raw egui window wiring the stores end-to-end (SC-1), human-verify checkpoint
 
 ### Phase 2: Activation
 **Goal**: Users (restaurant owners) can install the agent, enter a serial number, select a printer, test-print, and save — resulting in a bound, autostarting agent ready for operation
