@@ -968,3 +968,76 @@ Phase 1 has no v1 REQUIREMENTS IDs — it is a pure enabling spike. The verifiab
 
 **Research date:** 2026-07-15
 **Valid until:** 2026-08-15 (stable stack; egui moves fast but 0.35 just released 2026-06-25)
+
+---
+
+## Cross-Platform Structure (Addendum 2026-07-15 — "works on Linux too")
+
+> Owner added the requirement that the **portable core builds and `cargo test`s on Linux**
+> (dev/test parity), while the **product stays Windows-only for v1**. See CONTEXT.md
+> D-01..D-04 (revised) + D-20..D-24 (new). This addendum captures the structural pattern;
+> exact Linux system-lib names are validated empirically during the spike (we can now build
+> on Linux, so this is a `cargo build` away — no speculation needed).
+
+### What is portable vs Windows-only
+
+| Concern | Portability | Notes |
+|---|---|---|
+| `rusqlite` (bundled) + `rusqlite_migration` | **Portable** | Bundled SQLite compiles on Linux identically; no DLL |
+| `dirs::data_dir()` app-dir resolution | **Portable** | `%APPDATA%` (Win) / `$XDG_DATA_HOME`→`~/.local/share` (Linux) |
+| `winit 0.30` + `egui` + `egui-winit` + `egui-wgpu` + `wgpu 29` | **Portable** | wgpu picks DX12 on Windows, Vulkan/GL on Linux; winit does X11/Wayland. The spike **window runs on Linux** |
+| `serde`/`serde_json`/`thiserror`/`anyhow`/`tokio`/`reqwest`(rustls)/`tokio-tungstenite`/`hmac`/`sha2` | **Portable** | Pure Rust / rustls — no OS lock-in |
+| `serialport` | **Portable-ish** | Builds on Linux but needs `libudev` dev headers (`libudev-dev`); if it complicates Linux CI, gate it Windows-only for now (not exercised until Phase 5) |
+| `windows`, `windows-dpapi`, `printers`, `tray-icon`, `auto-launch`, `velopack`, `tauri-winrt-notification` | **Windows-only** | Put under `[target.'cfg(windows)'.dependencies]`; `#[cfg(windows)]` the code that uses them |
+
+### Cargo.toml pattern
+```toml
+[dependencies]            # portable — compiles on Linux + Windows
+winit = "0.30.13"
+egui = "0.35"
+egui-winit = "0.35"
+egui-wgpu = { version = "0.35", features = ["winit"] }
+wgpu = "29"
+rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite_migration = "2.6"
+dirs = "6"
+thiserror = "2"
+anyhow = "1"
+# ... tokio/reqwest/serde/etc. (present for later phases)
+
+[target.'cfg(windows)'.dependencies]   # Windows-only — Linux never links these
+windows = { version = "0.62", features = [/* printing etc. */] }
+windows-dpapi = "0.2"
+tray-icon = "0.24"
+# printers / auto-launch / velopack / tauri-winrt-notification (later phases)
+```
+
+### CredentialStore trait pattern (Pattern 3, revised)
+```rust
+pub trait CredentialStore {
+    fn save(&self, secret: &[u8]) -> Result<(), CredentialError>;
+    fn load(&self) -> Result<Vec<u8>, CredentialError>;
+}
+#[cfg(windows)]      pub struct DpapiCredentialStore { /* windows-dpapi Scope::User */ }
+#[cfg(not(windows))] pub struct DevFileCredentialStore { /* plaintext file — DEV/TEST ONLY, NOT SECURE */ }
+```
+- `CredentialError` (`NotFound` / `Corrupt`, `thiserror`) is portable and tested on both.
+- The DPAPI **real** round-trip + corrupt-blob decrypt test stay `#[cfg(windows)]`.
+- The Linux impl exists to build/test the trait + error contract — never to ship.
+
+### CI matrix
+- `ubuntu-latest`: install Vulkan loader + X11/Wayland dev headers (e.g. `libxkbcommon-dev`,
+  `libwayland-dev`, `libvulkan1`/`mesa-vulkan-drivers` — confirm empirically), then
+  `cargo build` + `cargo test`. Fast default gate.
+- `windows-latest`: `cargo build --release` + full `cargo test` (`WGPU_BACKEND=dx12`), incl. DPAPI.
+
+### Landmine
+- **`wgpu` on headless Linux CI:** `ubuntu-latest` has no GPU; wgpu needs a software Vulkan
+  (lavapipe / `mesa-vulkan-drivers`) or the window/render test must be `#[ignore]`d in CI
+  and only run interactively. The portable **non-render** tests (SQLite, migrations,
+  app-dir, credential trait) have no GPU dependency and always run. Keep the render/window
+  smoke test separate so headless CI stays green.
+
+**Cross-platform confidence:** HIGH for the structure (standard Rust `cfg`/target-deps
+pattern; wgpu/winit are cross-platform by design). MEDIUM for exact Linux system-lib names
+in CI — resolved empirically on first `cargo build` since we now build on Linux.

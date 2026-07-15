@@ -22,21 +22,16 @@
 ## Phase Details
 
 ### Phase 1: Foundation + Thread Model Spike
-**Goal**: Prove the `winit 0.30` + raw `egui` (`egui-winit` + `egui-wgpu`) event-loop integration and initialize all persistence infrastructure so every subsequent phase builds on a validated base
+**Goal**: Prove the `winit 0.30` + raw `egui` (`egui-winit` + `egui-wgpu`) event-loop integration and initialize all persistence infrastructure on a **cross-platform-buildable** base (portable core builds+tests on Linux AND Windows; product v1 stays Windows-only) so every subsequent phase builds on a validated base
 **Mode:** mvp
 **Depends on**: Nothing
 **Requirements**: (none — pure technical spike; unblocks all v1 requirements)
 **Success Criteria** (what must be TRUE):
-  1. A minimal `winit 0.30` `ApplicationHandler` event loop drives a raw `egui`-rendered window (`egui-winit` + `egui-wgpu`) on Windows without a separate Win32 message loop (or the subprocess alternative is proven and documented as the Phase 2 approach). *[Revised 2026-07-15: `winit 0.30` replaces `tao` — tao's old closure API is incompatible with current `egui-winit`; see Phase 1 RESEARCH.md.]*
-  2. SQLite `state.db` initializes at `%APPDATA%\BrevlyPrint\state.db` with tables `config`, `printed_jobs`, and `retry_queue` on first run
-  3. DPAPI `credential.bin` can be written (Scope::User encrypt) and read back; a corrupted or missing file returns a `CredentialError` rather than panicking
-  4. The Cargo.toml compiles a Windows target binary with the full dependency set (winit, tray-icon, egui/egui-winit/egui-wgpu, wgpu, tokio, reqwest rustls, rusqlite bundled + rusqlite_migration, windows crate, serialport, auto-launch, velopack, tauri-winrt-notification, windows-dpapi) — verified versions per Phase 1 RESEARCH.md §Standard Stack
-**Plans**: 3 plans (3 waves)
-
-Plans:
-- [ ] 01-01-PLAN.md — Cargo lib+bin scaffold, full v1 dep set (verified versions), %APPDATA% init, Wave 0 test scaffolds + Windows CI gate
-- [ ] 01-02-PLAN.md — Persistence slice: rusqlite_migration v1 schema (3 tables) + ConfigStore, DPAPI CredentialStore with typed non-panic errors
-- [ ] 01-03-PLAN.md — winit 0.30 ApplicationHandler + raw egui spike window (SC-1), lib startup wiring, go/no-go decision (SPIKE-NOTES.md)
+  1. A minimal `winit 0.30` `ApplicationHandler` event loop drives a raw `egui`-rendered window (`egui-winit` + `egui-wgpu`) without a separate Win32 message loop — proven on **Linux** (Vulkan/GL) and confirmed on **Windows** (DX12) (or the subprocess alternative is proven and documented as the Phase 2 approach). *[Revised 2026-07-15: `winit` replaces `tao`; and window is now cross-platform per the "works on Linux too" requirement — see Phase 1 CONTEXT/RESEARCH.]*
+  2. SQLite `state.db` initializes with tables `config`, `printed_jobs`, `retry_queue` on first run at the per-platform app dir (`%APPDATA%\BrevlyPrint\` on Windows, `~/.local/share/BrevlyPrint/` on Linux via `dirs`); verified by `cargo test` on **both** platforms
+  3. Credentials round-trip through a `CredentialStore` trait; missing/corrupt → typed `CredentialError` (never panics) on both impls. Windows impl uses DPAPI `Scope::User` (real round-trip proven on Windows); a Linux dev impl exists so the trait/error contract tests pass on Linux
+  4. Cargo compiles the **portable core on `x86_64-unknown-linux-gnu`** AND the **full v1 dep set on `x86_64-pc-windows-msvc`** (Windows-only crates — `windows`, `windows-dpapi`, `tray-icon`, `printers`, `auto-launch`, `velopack`, `tauri-winrt-notification` — under `[target.'cfg(windows)'.dependencies]`) — verified versions per Phase 1 RESEARCH.md §Standard Stack
+**Plans**: TBD (replanned 2026-07-15 for cross-platform — see phase dir)
 
 ### Phase 2: Activation
 **Goal**: Users (restaurant owners) can install the agent, enter a serial number, select a printer, test-print, and save — resulting in a bound, autostarting agent ready for operation
