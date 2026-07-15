@@ -22,7 +22,7 @@
 ## Phase Details
 
 ### Phase 1: Foundation + Thread Model Spike
-**Goal**: Prove the `tao` + raw `egui` event-loop integration and initialize all persistence infrastructure so every subsequent phase builds on a validated base
+**Goal**: Prove the `winit 0.30` + raw `egui` (`egui-winit` + `egui-wgpu`) event-loop integration and initialize all persistence infrastructure so every subsequent phase builds on a validated base
 **Mode:** mvp
 **Depends on**: Nothing
 **Requirements**: (none — pure technical spike; unblocks all v1 requirements)

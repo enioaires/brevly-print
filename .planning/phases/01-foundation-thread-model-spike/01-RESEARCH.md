@@ -872,22 +872,25 @@ Phase 1 has no v1 REQUIREMENTS IDs — it is a pure enabling spike. The verifiab
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All three resolved into Phase 1 plan actions during planning (2026-07-15). Each carries a
+> concrete resolution the plans implement; OQ1 additionally has a runtime fallback baked in.
 
 1. **`rusqlite_migration` multi-statement `M::up()` compatibility with rusqlite 0.40**
    - What we know: `rusqlite_migration 2.6.0` requires `rusqlite ^0.40.0`. `execute_batch()` handles multi-statement SQL.
    - What's unclear: Whether the specific multi-statement DDL in Pattern 4 (three `CREATE TABLE` + one `CREATE INDEX` in one `M::up()` string) works without splitting into multiple `M::up()` calls.
-   - Recommendation: Test in Phase 1 spike. If multi-statement fails, split into 4 separate `M::up()` calls (still one migration version).
+   - **RESOLVED:** Plan 01-02/T1 uses the single multi-statement `M::up()`; if it fails at runtime (Pitfall 7), the action splits it into separate `M::up()` calls (still one migration version). Runtime fallback is built into the plan — verified during the spike.
 
 2. **`egui-wgpu` render loop texture format on Windows DX12**
    - What we know: wgpu 29 DX12 WARP uses `TextureFormat::Bgra8Unorm` as the preferred surface format on Windows.
    - What's unclear: Whether `egui_wgpu::Renderer::new(device, format, None, 1, false)` requires explicit format selection vs. auto-detection from the surface.
-   - Recommendation: Use `surface.get_capabilities(&adapter).formats[0]` to query the preferred format, then pass it to `Renderer::new`.
+   - **RESOLVED:** use `surface.get_capabilities(&adapter).formats[0]` to query the preferred format, then pass it to `Renderer::new`. Incorporated into plan 01-03/T2 action + key_links.
 
 3. **`velopack 1.2.0` initialization requirement at startup**
    - What we know: Velopack Rust SDK requires calling `VelopackApp::build().run()` at the start of `main()` to handle update bootstrapper protocol. If omitted, updates silently fail.
    - What's unclear: Whether the Phase 1 stub initialization of velopack (a no-op call at startup) conflicts with the winit event loop setup that follows.
-   - Recommendation: Add `velopack::VelopackApp::build().run();` as the FIRST line of `main()` before any event loop or AppState initialization. This is idempotent if not in update mode.
+   - **RESOLVED:** add `velopack::VelopackApp::build().run();` as the FIRST line of `main()` before any event loop or AppState init (idempotent when not in update mode). Incorporated into plan 01-03/T2 action.
 
 ---
 
