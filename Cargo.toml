@@ -1,0 +1,86 @@
+[package]
+name = "brevly-print"
+version = "0.1.0"
+edition = "2024"
+description = "Native Windows print agent for Noren (replaces QZ Tray)"
+
+[lib]
+name = "brevly_print"
+path = "src/lib.rs"
+
+[[bin]]
+name = "brevly-print"
+path = "src/main.rs"
+
+# ── Portable dependencies (compile on Linux + Windows) ──────────────────────
+[dependencies]
+
+# Event loop + spike window (Phase 1)
+winit       = "0.30.13"
+egui        = "0.35"
+egui-winit  = "0.35"
+egui-wgpu   = { version = "0.35", features = ["winit"] }
+wgpu        = { version = "29", default-features = false, features = ["wgsl", "dx12"] }
+
+# Persistence (Phase 1)
+rusqlite           = { version = "0.40", features = ["bundled"] }
+rusqlite_migration = "2.6"
+
+# Config serialization
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# AppData path resolution
+dirs = "6"
+
+# Async runtime + HTTP (Phase 2+)
+tokio   = { version = "1", features = ["full"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+
+# WebSocket / Pusher (Phase 4)
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+
+# Pusher HMAC auth (Phase 4)
+hmac = "0.13"
+sha2 = "0.11"
+
+# Error handling
+thiserror = "2"
+anyhow    = "1"
+
+# ── Windows-only dependencies (Linux never links these) ──────────────────────
+[target.'cfg(windows)'.dependencies]
+
+# Windows printing spooler (Phase 5)
+windows = { version = "0.62", features = [
+    "Win32_Graphics_Printing",
+    "Win32_Foundation",
+] }
+
+# DPAPI credential store (Phase 1 — real impl, Windows only)
+windows-dpapi = "0.2"
+
+# System tray (Phase 3)
+tray-icon = "0.24"
+
+# Printer enumeration (Phase 2)
+printers = "2"
+
+# Serial port (Phase 5)
+# TODO Phase 5: move to portable + install libudev-dev in Linux CI, or keep gated.
+# serialport needs libudev-dev on Linux which complicates Linux CI setup;
+# it is not exercised until Phase 5, so keeping it Windows-only for now.
+serialport = "4.9"
+
+# Autostart (Phase 2)
+auto-launch = "0.6"
+
+# Auto-update (Phase 7)
+velopack = "1"
+
+# Windows toast notifications (Phase 6)
+tauri-winrt-notification = "0.8"
+
+# ── Dev dependencies ─────────────────────────────────────────────────────────
+[dev-dependencies]
+tempfile = "3"
