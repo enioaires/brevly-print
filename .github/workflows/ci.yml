@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Linux: portable core build + test ──────────────────────────────────────
+  build-linux:
+    name: Build & Test (Linux — portable core)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # System libraries required by wgpu/winit on Linux (headless CI).
+      # Vulkan loader + X11/Wayland + XKB + mesa-vulkan-drivers (lavapipe for headless).
+      # Exact list validated empirically on first cargo build — update if build fails.
+      - name: Install wgpu / winit system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            mesa-vulkan-drivers \
+            libvulkan1
+
+      - name: Build (portable core)
+        run: cargo build
+
+      - name: Run tests (portable core — no DPAPI, no display required)
+        run: cargo test
+
+  # ── Windows: full v1 dependency set build + test (incl. DPAPI) ─────────────
+  build-windows:
+    name: Build & Test (Windows — full v1 dep set)
+    runs-on: windows-latest
+
+    env:
+      # Force wgpu to use DX12 WARP (software rasterizer) — always present on Windows
+      WGPU_BACKEND: dx12
+      # SQLite file-lock safety in integration tests
+      RUST_TEST_THREADS: 1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable (x86_64-pc-windows-msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary (proves full v1 dep set compiles — SC-4 Windows half)
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Run tests (full suite — includes real DPAPI round-trip)
+        run: cargo test --target x86_64-pc-windows-msvc
