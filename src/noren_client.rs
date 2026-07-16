@@ -157,6 +157,24 @@ pub async fn activate(
     }
 }
 
+// ── Internal helpers ─────────────────────────────────────────────────────────
+
+/// Validate a `job_id` before interpolating it into a URL path segment (CR-02).
+///
+/// Rejects IDs that are empty or contain characters that could alter the URL
+/// path, query string, or encoding: `/`, `.`, `\`, `?`, `#`, `%`, or NUL.
+/// A crafted `job_id` such as `"../admin"` or `"foo%2F..%2Fbar"` would otherwise
+/// produce requests to unintended backend endpoints (path traversal).
+fn validate_job_id(job_id: &str) -> anyhow::Result<()> {
+    if job_id.is_empty() {
+        anyhow::bail!("job_id is empty");
+    }
+    if job_id.chars().any(|c| matches!(c, '/' | '.' | '\\' | '?' | '#' | '%' | '\0')) {
+        anyhow::bail!("job_id contains invalid characters: {:?}", job_id);
+    }
+    Ok(())
+}
+
 // ── Pusher channel authentication ────────────────────────────────────────────
 
 /// POST channel auth to `{base_url}/api/agent/pusher/auth` and return the
@@ -244,6 +262,9 @@ pub async fn fetch_job_bytes(
 ) -> anyhow::Result<Vec<u8>> {
     use base64::Engine as _;
 
+    // Reject job_id values that could alter the URL path (CR-02 — path traversal).
+    validate_job_id(job_id)?;
+
     // Local deserialize target — avoids polluting the module namespace.
     #[derive(Deserialize)]
     struct BytesResponse {
@@ -288,6 +309,9 @@ pub async fn ack_job(
     agent_token: &str,
     job_id: &str,
 ) -> anyhow::Result<()> {
+    // Reject job_id values that could alter the URL path (CR-02 — path traversal).
+    validate_job_id(job_id)?;
+
     let url = format!("{base_url}/api/agent/jobs/{job_id}/ack");
 
     let resp = client
