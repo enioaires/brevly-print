@@ -134,8 +134,21 @@ impl ActivationFormState {
     }
 
     /// Clear serial error and rebind confirm when the user changes the serial field.
+    ///
+    /// Also invalidates any previously received activation token so a serial edit
+    /// cannot persist credentials from a prior activation (stale-token bug CR-04).
     pub fn on_serial_changed(&mut self) {
         self.serial_error = None;
         self.show_rebind_confirm = false;
+        // Invalidate prior activation result so a serial edit requires re-activation.
+        if self.agent_token.is_some() {
+            self.agent_token = None;
+            self.tenant_id = None;
+            self.pusher_key = None;
+            self.pusher_cluster = None;
+            self.enabled_types.clear();
+            self.flow = FlowState::Idle;
+            self.test_print_confirmed = None;
+        }
     }
 }
