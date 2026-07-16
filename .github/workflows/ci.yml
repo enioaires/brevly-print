@@ -85,7 +85,7 @@ jobs:
           vpk pack `
             --packId BrevlyPrint `
             --packVersion $version `
-            --packDir target\release `
+            --packDir target\x86_64-pc-windows-msvc\release `
             --mainExe brevly-print.exe `
             --outputDir Releases `
             --packTitle "Brevly Print" `
