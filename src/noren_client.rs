@@ -219,3 +219,77 @@ pub async fn pusher_auth(
         status => anyhow::bail!("pusher_auth: unexpected status {status}"),
     }
 }
+
+/// Fetch the ESC/POS bytes for a print job from the Noren backend.
+///
+/// `GET /api/agent/jobs/{job_id}/bytes` returns `{ "bytes": "<base64>" }`.
+/// The base64 payload is decoded and returned as raw bytes ready for the printer.
+///
+/// `agent_token` is passed ONLY via `.bearer_auth()` — never in any log or
+/// error string (T-02-02 / T-05-01).
+pub async fn fetch_job_bytes(
+    client: &reqwest::Client,
+    base_url: &str,
+    agent_token: &str,
+    job_id: &str,
+) -> anyhow::Result<Vec<u8>> {
+    use base64::Engine as _;
+
+    // Local deserialize target — avoids polluting the module namespace.
+    #[derive(Deserialize)]
+    struct BytesResponse {
+        bytes: String,
+    }
+
+    let url = format!("{base_url}/api/agent/jobs/{job_id}/bytes");
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(agent_token) // T-02-02: token passed here, never in eprintln!
+        .send()
+        .await
+        .context("fetch_job_bytes: HTTP transport error")?;
+
+    match resp.status().as_u16() {
+        200 => {
+            let body: BytesResponse = resp
+                .json()
+                .await
+                .context("fetch_job_bytes: response parse error")?;
+            base64::engine::general_purpose::STANDARD
+                .decode(&body.bytes)
+                .context("fetch_job_bytes: base64 decode error")
+        }
+        status => anyhow::bail!("fetch_job_bytes: unexpected status {status}"),
+    }
+}
+
+/// Acknowledge a print job on the Noren backend (idempotent).
+///
+/// `POST /api/agent/jobs/{job_id}/ack` — no request body.
+///
+/// 200: normal success.
+/// 409: already acknowledged (post-crash repeat) — treated as `Ok(())` by design (C4 / D-04).
+///
+/// `agent_token` is passed ONLY via `.bearer_auth()` — never in any log or
+/// error string (T-02-02 / T-05-01).
+pub async fn ack_job(
+    client: &reqwest::Client,
+    base_url: &str,
+    agent_token: &str,
+    job_id: &str,
+) -> anyhow::Result<()> {
+    let url = format!("{base_url}/api/agent/jobs/{job_id}/ack");
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(agent_token) // T-02-02: token passed here, never in eprintln!
+        .send()
+        .await
+        .context("ack_job: HTTP transport error")?;
+
+    match resp.status().as_u16() {
+        200 | 409 => Ok(()), // 409 = already acked — idempotent by design (C4 / D-04)
+        status => anyhow::bail!("ack_job: unexpected status {status}"),
+    }
+}
