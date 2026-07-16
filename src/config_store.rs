@@ -3,6 +3,10 @@
 //! Provides versioned migrations via `rusqlite_migration` (`user_version` pragma).
 //! Migration v1 initialises the three schema-v1 tables: `config`, `printed_jobs`,
 //! and `retry_queue` (D-12, D-13, D-14).
+//! Migration v2 adds the `'printing'` intermediate status to `printed_jobs.status`
+//! CHECK constraint for crash recovery (RES-04 / D-01). SQLite cannot modify a CHECK
+//! constraint in place, so v2 uses the table-recreation pattern (create v2, copy, drop,
+//! rename, re-index).
 //!
 //! Fully portable — no `#[cfg(windows)]` gates needed.
 //!
@@ -56,6 +60,32 @@ static MIGRATIONS: LazyLock<Migrations<'static>> = LazyLock::new(|| {
                 last_error    TEXT,
                 created_at    TEXT
             );",
+        ),
+        // v2 — add 'printing' intermediate status for crash recovery (RES-04)
+        //
+        // SQLite does not support ALTER TABLE ... MODIFY COLUMN or in-place CHECK changes,
+        // so the standard table-recreation pattern is used: create v2 with the expanded
+        // CHECK, copy all rows positionally (column order matches v1 exactly), drop old
+        // table, rename v2, re-create the status index.
+        //
+        // FK note: retry_queue.job_id REFERENCES printed_jobs(job_id). rusqlite_migration
+        // disables FK enforcement during migrations by default (PRAGMA foreign_keys=OFF),
+        // so the DROP/RENAME is safe without any pragma override here.
+        M::up(
+            "CREATE TABLE printed_jobs_v2 (
+                job_id      TEXT PRIMARY KEY NOT NULL,
+                job_type    TEXT,
+                status      TEXT NOT NULL DEFAULT 'pending'
+                                CHECK(status IN ('pending','printing','printed','failed')),
+                attempt     INTEGER NOT NULL DEFAULT 0,
+                received_at TEXT,
+                printed_at  TEXT,
+                failed_at   TEXT
+            );
+            INSERT INTO printed_jobs_v2 SELECT * FROM printed_jobs;
+            DROP TABLE printed_jobs;
+            ALTER TABLE printed_jobs_v2 RENAME TO printed_jobs;
+            CREATE INDEX idx_printed_jobs_status ON printed_jobs(status);",
         ),
     ])
 });
