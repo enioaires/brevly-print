@@ -121,7 +121,8 @@ pub async fn run_print_worker(
         }
 
         // Fetch ESC/POS bytes from the Noren backend (PRT-01).
-        // On failure: leave the row at status='pending' so Phase 6 can retry.
+        // On failure: leave the row at status='pending' — no bytes fetched;
+        // RES-03 pending pull re-fetches on reconnect.
         let bytes = match fetch_job_bytes(&http, &base_url, &agent_token, &event.job_id).await {
             Ok(b) => b,
             Err(e) => {
@@ -129,27 +130,62 @@ pub async fn run_print_worker(
                     "[brevly-print] Print worker: fetch failed for {}: {e:#}",
                     event.job_id
                 );
-                continue; // leave status='pending' — Phase 6 retries
+                continue; // leave status='pending' — no bytes fetched; RES-03 pending pull re-fetches on reconnect
             }
         };
 
+        // D-02: set crash-recovery fence BEFORE calling print_raw (RES-04).
+        // If the process crashes here, the row stays at 'printing' and the retry task
+        // re-queues it at startup (D-05). Leave status='printing' on failure too —
+        // the retry task owns the transition to 'failed'.
+        // Also increments attempt so the success UPDATE does not double-count.
+        match conn.execute(
+            "UPDATE printed_jobs SET status='printing', attempt=attempt+1 WHERE job_id=?1",
+            rusqlite::params![event.job_id],
+        ) {
+            Ok(0) => eprintln!(
+                "[brevly-print] Print worker: UPDATE to 'printing' matched 0 rows for {} — row absent",
+                event.job_id
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "[brevly-print] Print worker: SQLite update to 'printing' failed for {}: {e:#}",
+                event.job_id
+            ),
+        }
+
         // Print (PRT-02/03/04/05/06).
         // C1: call print_raw() only — RAW datatype is hardcoded in the spooler impl.
-        // On failure: leave the row at status='pending' so Phase 6 can retry.
         if let Err(e) = printer.print_raw(&bytes) {
             eprintln!(
                 "[brevly-print] Print worker: print failed for {}: {e:#}",
                 event.job_id
             );
-            continue; // leave status='pending' — Phase 6 retries
+            // D-12: enqueue for Phase 6 retry task; status stays 'printing' so crash recovery
+            // + retry both find it. Do NOT touch attempt_count here — the retry task owns it (D-06).
+            let error_msg = e.to_string();
+            if let Err(db_err) = conn.execute(
+                "INSERT OR IGNORE INTO retry_queue
+                     (job_id, job_type, escpos_bytes, attempt_count, next_retry_at, last_error, created_at)
+                 VALUES
+                     (?1, ?2, ?3, 1, datetime('now', '+30 seconds'), ?4, datetime('now'))",
+                rusqlite::params![event.job_id, event.job_type, bytes.as_slice(), error_msg],
+            ) {
+                eprintln!(
+                    "[brevly-print] Print worker: retry_queue INSERT failed for {}: {db_err:#}",
+                    event.job_id
+                );
+            }
+            continue; // status stays 'printing' — do NOT revert to 'pending'
         }
 
         // UPDATE before ack — C4 constraint (D-09 / T-05-04).
         // This must textually and temporally precede the ack_job() call below.
-        // WR-03: increment attempt counter so Phase 6 retry logic can apply backoff / give up.
+        // Note: attempt was already incremented by the 'printing' fence above (D-02),
+        // so this UPDATE only changes status and printed_at (no double-increment).
         // WR-05: log when rows_affected == 0 (job_id absent — INSERT may have failed silently).
         match conn.execute(
-            "UPDATE printed_jobs SET status='printed', printed_at=datetime('now'), attempt=attempt+1 WHERE job_id=?1",
+            "UPDATE printed_jobs SET status='printed', printed_at=datetime('now') WHERE job_id=?1",
             rusqlite::params![event.job_id],
         ) {
             Ok(0) => eprintln!(
