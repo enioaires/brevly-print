@@ -2,12 +2,13 @@
 //!
 //! Startup order (D-17):
 //!   1. Velopack bootstrapper (Windows-only, must be the very first call — OQ3)
-//!   2. `init_app_dir()` — creates `BrevlyPrint/` in the platform data dir
-//!   3. `open_and_migrate()` — migrates `state.db` to schema v1
-//!   4. `config_store::set/get` — one round-trip to prove the store is live
-//!   5. Credential probe (ACT-07): NotFound/Corrupt → activation window, Ok → Phase 3 runtime
-//!   6. `tokio::runtime::Builder::new_multi_thread()` runtime built BEFORE the event loop (Pitfall 3)
-//!   7. `EventLoop::<UserEvent>::with_user_event()` + `run_app()` — drives the egui window
+//!   2. Single-instance mutex guard (D-08/D-09) — silent exit if another instance running
+//!   3. `init_app_dir()` — creates `BrevlyPrint/` in the platform data dir
+//!   4. `open_and_migrate()` — migrates `state.db` to schema v1
+//!   5. `config_store::set/get` — one round-trip to prove the store is live
+//!   6. Credential probe (ACT-07): NotFound/Corrupt → activation window, Ok → Phase 3 runtime
+//!   7. `tokio::runtime::Builder::new_multi_thread()` runtime built BEFORE the event loop (Pitfall 3)
+//!   8. `EventLoop::<UserEvent>::with_user_event()` + `run_app()` — drives the egui window or tray
 
 use anyhow::Context as _;
 use winit::{
@@ -21,54 +22,114 @@ use brevly_print::{
     app_dir::init_app_dir,
     config_store,
     credential_store::{credential_store, CredentialError, CredentialStore as _},
+    health_state::HealthState,
 };
 
-// ── UserEvent placeholder (tray wiring is Phase 3) ──────────────────────────
+#[cfg(windows)]
+use windows::Win32::{
+    Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError},
+    System::Threading::CreateMutexW,
+};
+#[cfg(windows)]
+use tray_icon::{TrayIconEvent};
+#[cfg(windows)]
+use tray_icon::menu::MenuEvent;
+#[cfg(windows)]
+use brevly_print::tray_runtime::{self, TrayRuntime};
+
+// ── AppMode ──────────────────────────────────────────────────────────────────
+
+/// Which startup path the application is in (no cfg gate — portable).
+enum AppMode {
+    /// First-run or re-activation: shows the egui activation window.
+    Activation,
+    /// Already-activated: runs invisibly as a tray agent.
+    Runtime,
+}
+
+// ── UserEvent ────────────────────────────────────────────────────────────────
 
 /// Events sent from background tasks / OS integrations into the winit event loop.
-///
-/// Phase 3 will add `TrayIconEvent` and `MenuEvent` variants here.
 #[derive(Debug)]
 enum UserEvent {
-    // Phase 3: TrayIconEvent(tray_icon::TrayIconEvent),
-    // Phase 3: MenuEvent(tray_icon::menu::MenuEvent),
+    #[cfg(windows)]
+    TrayIconEvent(tray_icon::TrayIconEvent),
+    #[cfg(windows)]
+    MenuEvent(tray_icon::menu::MenuEvent),
+    HealthChanged(HealthState),
 }
 
 // ── Application state ────────────────────────────────────────────────────────
 
 /// The top-level `ApplicationHandler` that drives the winit event loop.
 struct App {
-    /// The activation window renderer; `None` until `resumed()` creates the window.
-    window: Option<ActivationWindow>,
-    /// Persistent multi-thread tokio runtime handle (Pattern 2 / Pitfall 3).
+    // === Phase 2 fields (keep) ===
     rt: tokio::runtime::Handle,
-    /// Shared reqwest HTTP client (Pitfall 6: create once, reuse).
     http: reqwest::Client,
-    /// Whether the startup credential check found NotFound/Corrupt (shows re-activation banner).
-    is_reactivation: bool,
-    /// App directory path (needed by save flow).
     app_dir: std::path::PathBuf,
-    /// SQLite connection (needed by save flow config_store::set calls).
     conn: rusqlite::Connection,
+
+    // === Phase 3 additions ===
+    /// AppMode: which startup path we are in.
+    mode: AppMode,
+    /// Current health state (Phase 3 seeds Connected; Phase 4 drives transitions).
+    health: HealthState,
+    /// Tray runtime (Windows-only, None in Activation mode and on Linux).
+    #[cfg(windows)]
+    tray_runtime: Option<TrayRuntime>,
+    /// Activation window (Some only when Activation mode or on-demand Reativar).
+    activation_window: Option<ActivationWindow>,
+    /// is_reactivation flag for ActivationWindow constructor.
+    is_reactivation: bool,
 }
 
 impl ApplicationHandler<UserEvent> for App {
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        // Create window + wgpu surface + egui renderer here (Pitfall 2: must be in resumed()).
-        // Skip if already initialised (resumed() may be called more than once on some platforms).
-        if self.window.is_none() {
-            match ActivationWindow::new(
-                event_loop,
-                self.rt.clone(),
-                self.http.clone(),
-                self.is_reactivation,
-                self.app_dir.clone(),
-            ) {
-                Ok(w) => self.window = Some(w),
-                Err(e) => {
-                    eprintln!("[brevly-print] Failed to create activation window: {e:#}");
-                    event_loop.exit();
+    fn new_events(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        cause: winit::event::StartCause,
+    ) {
+        #[cfg(windows)]
+        if cause == winit::event::StartCause::Init {
+            if matches!(self.mode, AppMode::Runtime) {
+                // CRITICAL: tray creation must happen here, not before run_app().
+                // See RESEARCH.md Pattern 1 — Win32 message pump must be running.
+                match TrayRuntime::new(self.health) {
+                    Ok(rt) => self.tray_runtime = Some(rt),
+                    Err(e) => {
+                        eprintln!("[brevly-print] Failed to create tray icon: {e:#}");
+                        event_loop.exit();
+                    }
                 }
+            }
+        }
+        // Suppress unused variable warning on Linux where the cfg block is empty.
+        let _ = (event_loop, cause);
+    }
+
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        match self.mode {
+            AppMode::Activation => {
+                // Create window + wgpu surface + egui renderer here (Pitfall 2: must be in resumed()).
+                // Skip if already initialised (resumed() may be called more than once on some platforms).
+                if self.activation_window.is_none() {
+                    match ActivationWindow::new(
+                        event_loop,
+                        self.rt.clone(),
+                        self.http.clone(),
+                        self.is_reactivation,
+                        self.app_dir.clone(),
+                    ) {
+                        Ok(w) => self.activation_window = Some(w),
+                        Err(e) => {
+                            eprintln!("[brevly-print] Failed to create activation window: {e:#}");
+                            event_loop.exit();
+                        }
+                    }
+                }
+            }
+            AppMode::Runtime => {
+                // No window to create — tray is created in new_events(Init).
             }
         }
     }
@@ -79,7 +140,7 @@ impl ApplicationHandler<UserEvent> for App {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let Some(window) = self.window.as_mut() else { return };
+        let Some(window) = self.activation_window.as_mut() else { return };
 
         // Forward to egui-winit first; if the event was consumed by egui, don't process it further.
         let response = window.handle_input(&event);
@@ -119,20 +180,83 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(
         &mut self,
-        _event_loop: &winit::event_loop::ActiveEventLoop,
+        event_loop: &winit::event_loop::ActiveEventLoop,
         event: UserEvent,
     ) {
         match event {
-            // Phase 3: handle tray / menu events here.
+            #[cfg(windows)]
+            UserEvent::TrayIconEvent(_e) => {
+                // D-07: left-click is no-op in Phase 3
+            }
+            #[cfg(windows)]
+            UserEvent::MenuEvent(e) => {
+                self.handle_menu_event(event_loop, e);
+            }
+            UserEvent::HealthChanged(state) => {
+                self.health = state;
+                #[cfg(windows)]
+                if let Some(rt) = &self.tray_runtime {
+                    rt.apply_health(state);
+                }
+                // Suppress unused variable warning on Linux where tray_runtime field is absent.
+                let _ = event_loop;
+            }
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        // Request a redraw every time the event loop is idle so egui can process
-        // animations, pending repaints, and the oneshot result polling (Pattern 2).
-        if let Some(window) = self.window.as_ref() {
-            window.window().request_redraw();
+        match self.mode {
+            AppMode::Activation => {
+                // Request a redraw every time the event loop is idle so egui can process
+                // animations, pending repaints, and the oneshot result polling (Pattern 2).
+                if let Some(window) = self.activation_window.as_ref() {
+                    window.window().request_redraw();
+                }
+            }
+            AppMode::Runtime => {
+                // ControlFlow::Wait already set; no redraw loop needed.
+                // The runtime is idle until a tray/menu/health event arrives.
+            }
         }
+    }
+}
+
+impl App {
+    #[cfg(windows)]
+    fn handle_menu_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        event: tray_icon::menu::MenuEvent,
+    ) {
+        let Some(rt) = &self.tray_runtime else { return };
+        let items = rt.menu_items();
+
+        if event.id == *items.reativar.id() {
+            // "Reativar": open activation window inside the running event loop.
+            self.is_reactivation = true;
+            self.mode = AppMode::Activation;
+            if self.activation_window.is_none() {
+                match ActivationWindow::new(
+                    event_loop,
+                    self.rt.clone(),
+                    self.http.clone(),
+                    true,
+                    self.app_dir.clone(),
+                ) {
+                    Ok(w) => self.activation_window = Some(w),
+                    Err(e) => {
+                        eprintln!("[brevly-print] Failed to create re-activation window: {e:#}");
+                    }
+                }
+            }
+        } else if event.id == *items.sobre.id() {
+            tray_runtime::show_about_dialog();
+        } else if event.id == *items.sair.id() {
+            if tray_runtime::confirm_quit_dialog() {
+                event_loop.exit();
+            }
+        }
+        // status item is disabled; no action expected
     }
 }
 
@@ -144,6 +268,33 @@ fn main() -> anyhow::Result<()> {
     #[cfg(windows)]
     velopack::VelopackApp::build().run();
     // (Non-Windows: no velopack bootstrapper call needed — the update flow is Windows-only.)
+
+    // D-08/D-09: named mutex guard; second instance exits silently.
+    // Placed after Velopack bootstrapper, before the tokio runtime build.
+    #[cfg(windows)]
+    let _mutex_guard = {
+        use std::iter::once;
+        let name: Vec<u16> = "Local\\BrevlyPrintAgent"
+            .encode_utf16().chain(once(0)).collect();
+        // SAFETY: Win32 FFI — pointer is derived from an owned Vec<u16> that remains alive
+        // for the duration of this block. The mutex name uses Local\ for session-scoping.
+        let result = unsafe {
+            CreateMutexW(None, false, windows::core::PCWSTR(name.as_ptr()))
+        };
+        match result {
+            Ok(handle) => {
+                // SAFETY: Win32 FFI — GetLastError() is valid after CreateMutexW returns Ok.
+                let last_err = unsafe { GetLastError() };
+                if last_err == ERROR_ALREADY_EXISTS {
+                    // SAFETY: Win32 FFI — handle is a valid HANDLE returned by CreateMutexW.
+                    let _ = unsafe { CloseHandle(handle) };
+                    return Ok(()); // silent exit — another instance is running
+                }
+                handle // hold for process lifetime
+            }
+            Err(_) => return Ok(()), // conservative: mutex failure → exit
+        }
+    };
 
     // ── Build the multi-thread tokio runtime BEFORE the event loop (Pitfall 3) ──
     // Keep the Runtime alive in this scope for the entire process lifetime.
@@ -169,7 +320,7 @@ fn main() -> anyhow::Result<()> {
 
     // ── Credential check (ACT-07) ────────────────────────────────────────────
     // NotFound|Corrupt → activation window (first run or re-activation)
-    // Ok(_)           → Phase 3 runtime (already activated)
+    // Ok(_)           → Runtime mode (already activated)
     // Io(e)           → fatal I/O error, propagate
     let cred = credential_store(&app_dir);
     // CR-02: capture result once to avoid TOCTOU — is_reactivation must reflect
@@ -177,9 +328,8 @@ fn main() -> anyhow::Result<()> {
     let cred_result = cred.load();
     let needs_activation = match &cred_result {
         Ok(_token) => {
-            // Already activated. Phase 3 will start the tray runtime here.
-            // For Phase 2, we log and exit 0 (no tray yet).
-            println!("[brevly-print] Credential found — agent already activated. (Phase 3: start tray runtime here)");
+            // Already activated — start the tray runtime.
+            println!("[brevly-print] Credential found — starting tray runtime.");
             false
         }
         Err(CredentialError::NotFound) => {
@@ -195,11 +345,10 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    // ── Phase 3 stub: if already activated, exit cleanly ─────────────────────
-    if !needs_activation {
-        println!("[brevly-print] Runtime phase not yet implemented (Phase 3). Exiting.");
-        return Ok(());
-    }
+    // Determine AppMode from credential check result (D-10: unified event loop).
+    let mode = if needs_activation { AppMode::Activation } else { AppMode::Runtime };
+    // D-02: seed Connected on successful startup; Phase 4 will drive real transitions.
+    let health = HealthState::Connected;
 
     // ── winit event loop ─────────────────────────────────────────────────────
     let event_loop = EventLoop::<UserEvent>::with_user_event()
@@ -207,15 +356,33 @@ fn main() -> anyhow::Result<()> {
         .context("Failed to build winit event loop")?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    // Phase 3: wire tray/menu event forwarding via event_loop.create_proxy() here.
+    // Wire tray + menu event forwarding into the winit event loop BEFORE run_app().
+    // Two separate proxies because each closure captures its own clone.
+    // Pattern: src/main.rs user_event handler receives these as UserEvent variants.
+    #[cfg(windows)]
+    {
+        let proxy = event_loop.create_proxy();
+        TrayIconEvent::set_event_handler(Some(move |event| {
+            let _ = proxy.send_event(UserEvent::TrayIconEvent(event));
+        }));
+
+        let proxy = event_loop.create_proxy();
+        MenuEvent::set_event_handler(Some(move |event| {
+            let _ = proxy.send_event(UserEvent::MenuEvent(event));
+        }));
+    }
 
     let mut app = App {
-        window: None,
         rt: rt_handle,
         http,
         is_reactivation: matches!(cred_result, Err(CredentialError::Corrupt(_))),
         app_dir: app_dir.clone(),
         conn,
+        mode,
+        health,
+        #[cfg(windows)]
+        tray_runtime: None,
+        activation_window: None,
     };
     event_loop.run_app(&mut app).context("Event loop error")?;
 
