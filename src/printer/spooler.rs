@@ -108,11 +108,18 @@ unsafe fn submit_job(
     })?;
 
     let mut bytes_written: u32 = 0;
+    // CR-04: guard against silent truncation — usize is 8 bytes on 64-bit; u32 is 4.
+    let data_len_u32 = u32::try_from(data.len()).map_err(|_| {
+        PrinterError::PrintFailed(format!(
+            "Print data too large for WritePrinter ({} bytes > u32::MAX)",
+            data.len()
+        ))
+    })?;
     // WritePrinter: data pointer + length in bytes.
     let write_ok: BOOL = WritePrinter(
         handle,
         data.as_ptr() as *const _,
-        data.len() as u32,
+        data_len_u32,
         &mut bytes_written,
     );
     if write_ok.0 == 0 {
