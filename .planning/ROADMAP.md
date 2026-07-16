@@ -95,7 +95,9 @@
   4. The ack is sent to Noren only after `status = 'done'` is written to SQLite; a crash between print and ack causes the job to be re-fetched on reconnect and deduplicated, never silently lost
   5. A job type that has been disabled in the per-tenant configuration is received but not printed; no error is raised
   6. Printing works via both paths: a USB thermal printer enumerated as a Windows printer (WritePrinter RAW) and a printer on a COM port (serialport)
-**Plans**: TBD
+**Plans**: 2 plans (2 waves)
+- [ ] 05-01-PLAN.md — HTTP primitives: base64 dep, fetch_job_bytes() + ack_job() in noren_client.rs, Wave-0 contract tests + print_worker skeleton (PRT-01, PRT-08)
+- [ ] 05-02-PLAN.md — Print worker vertical slice: run_print_worker() fetch→print→UPDATE→ack pipeline, enabled_types filter, main.rs spawn wiring (PRT-02/03/04/05/06/07/09)
 
 ### Phase 6: Resilience
 **Goal**: The agent handles printer failures and internet outages gracefully — retrying locally, alerting the operator in plain language, and pulling any missed jobs on reconnect — so no ticket is permanently lost
@@ -132,7 +134,7 @@
 | 2. Activation | 3/3 | Complete   | 2026-07-16 |
 | 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
 | 4. Pusher Event Stream | 2/2 | Complete   | 2026-07-16 |
-| 5. Job Pipeline | 0/0 | Not started | - |
+| 5. Job Pipeline | 0/2 | Planned | - |
 | 6. Resilience | 0/0 | Not started | - |
 | 7. Auto-Update + Distribution Polish | 0/0 | Not started | - |
 
@@ -178,4 +180,4 @@
 ---
 
 *Roadmap created: 2026-07-15*
-*Last updated: 2026-07-16 after Phase 4 planning (2 plans, 2 waves)*
+*Last updated: 2026-07-16 after Phase 5 planning (2 plans, 2 waves)*
