@@ -14,6 +14,7 @@ pub mod machine_id;
 pub mod noren_client;
 pub mod printer;
 pub mod pusher;
+pub mod print_worker;
 // spike_window kept for reference but superseded by activation_window in Phase 2.
 // Removed from main.rs startup flow.
 
