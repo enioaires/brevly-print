@@ -228,6 +228,15 @@ pub async fn pusher_auth(
     let resp = client
         .post(&url)
         .bearer_auth(agent_token)
+        // CRITICAL: SvelteKit's built-in CSRF protection (`checkOrigin`) rejects any
+        // POST with a form content-type whose `Origin` header does not match the host,
+        // returning 403 "Cross-site POST form submissions are forbidden" BEFORE the
+        // request reaches the endpoint. reqwest sends no Origin (it is a native app,
+        // not a browser), so the form-encoded body below would be blocked. Setting
+        // Origin = base_url makes the request same-origin and satisfies the check.
+        // (activate() is exempt because it posts application/json, which SvelteKit
+        // does not CSRF-check.)
+        .header("Origin", base_url)
         // CRITICAL: Noren reads body.get('channel_name') — NOT 'channel' (Pitfall 2)
         .form(&[("channel_name", channel), ("socket_id", socket_id)])
         .send()
