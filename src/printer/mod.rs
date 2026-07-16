@@ -45,10 +45,16 @@ pub enum PrinterId {
 ///
 /// Mirrors `CredentialStore` (same trait shape, cfg-gated impls).
 ///
-/// `Send` bound is required because `printer_from_entry()` returns `Box<dyn Printer>`
-/// that is held across `.await` points inside the `run_print_worker` async task
-/// spawned via `rt_handle.spawn()` (which requires `F: Future + Send`).
-pub trait Printer: Send {
+/// `Send + Sync` bounds are required because `printer_from_entry()` returns
+/// `Box<dyn Printer>` that is held across `.await` points inside async tasks
+/// spawned via `rt_handle.spawn()` (which requires `F: Future + Send`). The
+/// `Sync` bound is needed so that `&dyn Printer` (used in
+/// `retry_task::process_due_retries_once`) is `Send` and does not prevent the
+/// future from being `Send`.
+///
+/// All `Printer` implementations are trivially `Sync` — they hold only
+/// `String` fields and open a new OS handle on every `print_raw()` call.
+pub trait Printer: Send + Sync {
     /// Send raw ESC/POS bytes to the printer.
     ///
     /// On Windows spooler path: CRITICAL — pDatatype must be "RAW" (Pitfall C1).

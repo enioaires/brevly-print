@@ -1,13 +1,18 @@
-//! RED stubs for Phase 6 resilience requirements: RES-01, RES-02, RES-04.
+//! Integration tests for Phase 6 resilience: RES-01, RES-02, RES-04.
 //!
-//! Wave 0 scaffold — these tests assert the observable SQL invariants that
-//! Wave 1/2 production code must satisfy.  Tests that call not-yet-existing
-//! production functions (`run_retry_task`) are gated behind `#[ignore]` so the
-//! file compiles today; their bodies are `todo!()` placeholders.
+//! The SQL-invariant tests (crash recovery, poll query, blob round-trip, exhaustion
+//! SQL) were the original Wave 0 scaffolds. The two end-to-end tests
+//! (`retry_exhaustion_marks_failed` and `retry_task_smoke`) were added as RED stubs
+//! in Wave 0 and are now activated (W-01 gap closure) to drive the REAL poll-loop
+//! iteration code (`brevly_print::retry_task::process_due_retries_once`).
 //!
 //! Portable: runs on Linux and Windows (no Windows-API dependency in this file).
 
+use std::sync::{Arc, Mutex};
+
 use rusqlite::Connection;
+use tokio::io::AsyncWriteExt as _;
+use tokio::net::TcpListener;
 
 // ── Schema helper ────────────────────────────────────────────────────────────
 
@@ -215,54 +220,260 @@ fn retry_queue_insert_stores_blob_bytes() {
     assert_eq!(attempt_count, 1, "attempt_count must remain 1 after INSERT OR IGNORE no-op (dedup fence)");
 }
 
-// ── RES-02: Retry exhaustion (Wave 2 placeholder) ────────────────────────────
+// ── End-to-end helpers ────────────────────────────────────────────────────────
 
-/// Documents the retry exhaustion invariant (RES-02):
+/// Open an in-memory SQLite connection and run the REAL production migrations
+/// (including the v2 schema with the `'printing'` CHECK and retry_queue FK).
 ///
-/// After a failed print when `attempt_count >= 3`, the retry task must:
-///   1. DELETE the row from `retry_queue`
-///   2. UPDATE `printed_jobs SET status='failed', failed_at=datetime('now')`
-///   3. Send `HealthState::Problem` (red tray icon)
-///   4. Show a Windows toast notification (D-07)
-///
-/// This test will be activated in Wave 2 when `run_retry_task` is implemented.
-#[test]
-#[ignore = "Wave 2: run_retry_task not yet implemented"]
-fn retry_exhaustion_marks_failed() {
-    // Wave 2 will call run_retry_task with a mock printer that always fails,
-    // seed retry_queue with attempt_count=3, and assert:
-    //   - retry_queue row is DELETEd after the exhaustion attempt
-    //   - printed_jobs.status = 'failed' with failed_at set
-    //   - health_state Problem callback was invoked
-    todo!(
-        "Wave 2: implement run_retry_task in src/retry_task.rs (D-03/D-06), \
-         then remove #[ignore] and wire up the mock printer + health state spy"
-    )
+/// Replaces the hand-rolled `make_test_conn` for tests that drive production code,
+/// so the schema cannot drift from what `process_due_retries_once` expects.
+fn make_migrated_conn() -> Connection {
+    let mut conn = Connection::open_in_memory().expect("in-memory DB");
+    brevly_print::config_store::migrate(&mut conn).expect("run migrations");
+    conn
 }
 
-// ── RES-01/02/04: Retry task smoke (Wave 2 placeholder) ─────────────────────
+/// Spawn a local HTTP stub that accepts ONE request and returns `status`.
+/// Returns the base URL (e.g. `"http://127.0.0.1:PORT"`).
+async fn spawn_ack_stub(status: u16) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
+    let port = listener.local_addr().unwrap().port();
 
-/// Smoke test for `brevly_print::retry_task::run_retry_task`.
+    let response = format!(
+        "HTTP/1.1 {status} OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    );
+
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut buf = [0u8; 4096];
+        let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+        socket.write_all(response.as_bytes()).await.expect("write");
+        socket.shutdown().await.ok();
+    });
+
+    format!("http://127.0.0.1:{port}")
+}
+
+/// A mock printer that always fails. Implements `Printer + Send + Sync`.
+struct AlwaysFailPrinter;
+
+impl brevly_print::printer::Printer for AlwaysFailPrinter {
+    fn print_raw(&self, _bytes: &[u8]) -> Result<(), brevly_print::printer::PrinterError> {
+        Err(brevly_print::printer::PrinterError::PrintFailed(
+            "mock printer always fails".to_string(),
+        ))
+    }
+}
+
+/// A mock printer that always succeeds.
+struct AlwaysOkPrinter;
+
+impl brevly_print::printer::Printer for AlwaysOkPrinter {
+    fn print_raw(&self, _bytes: &[u8]) -> Result<(), brevly_print::printer::PrinterError> {
+        Ok(())
+    }
+}
+
+// ── RES-02: End-to-end retry exhaustion ──────────────────────────────────────
+
+/// End-to-end test: `process_due_retries_once` with an always-failing printer
+/// and a due row at `attempt_count=3` (exhaustion threshold).
 ///
-/// This test documents the module entry point and will be activated in Wave 2.
-/// The function signature per D-03:
-/// ```
-/// pub async fn run_retry_task(
-///     db_path: PathBuf,
-///     agent_token: String,
-///     base_url: String,
-///     http: reqwest::Client,
-///     printer: Box<dyn Printer + Send>,
-///     send_health: impl Fn(HealthState) + Send + 'static,
-/// )
-/// ```
-#[test]
-#[ignore = "Wave 2: run_retry_task not yet implemented"]
-fn retry_task_smoke() {
-    // Wave 2: verify run_retry_task spawns without panic, processes a due retry_queue
-    // row, and calls ack_job on success.  Use a mock printer and in-memory DB.
-    todo!(
-        "Wave 2: implement src/retry_task.rs with pub async fn run_retry_task(...) \
-         per D-03 in 06-CONTEXT.md, then remove #[ignore]"
+/// After one call to the real poll-loop iteration body, asserts:
+///   1. `retry_queue` row is DELETEd.
+///   2. `printed_jobs.status = 'failed'` with `failed_at` set.
+///   3. `send_health(HealthState::Problem)` was called exactly once.
+///
+/// This is the W-01 gap closure: the prior in-module `retry_exhaustion_marks_failed`
+/// unit test re-implemented the SQL inline; this test calls the REAL production
+/// function including the `send_health` side-effect.
+#[tokio::test]
+async fn retry_exhaustion_marks_failed() {
+    let conn = make_migrated_conn();
+
+    // Seed printed_jobs first (retry_queue has a FK reference).
+    conn.execute(
+        "INSERT INTO printed_jobs (job_id, job_type, status) VALUES ('job-ex2', 'pedido', 'pending')",
+        [],
     )
+    .expect("seed printed_jobs");
+
+    // Seed retry_queue at attempt_count=3 (exhaustion threshold), due immediately.
+    conn.execute(
+        "INSERT INTO retry_queue
+             (job_id, job_type, escpos_bytes, attempt_count, next_retry_at, last_error, created_at)
+         VALUES ('job-ex2', 'pedido', X'1b4041', 3, datetime('now','-1 second'), 'prev error', datetime('now'))",
+        [],
+    )
+    .expect("seed retry_queue");
+
+    // Health spy: records every HealthState delivered by the production loop.
+    let health_calls: Arc<Mutex<Vec<brevly_print::health_state::HealthState>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let health_spy = {
+        let calls = Arc::clone(&health_calls);
+        move |state: brevly_print::health_state::HealthState| {
+            calls.lock().unwrap().push(state);
+        }
+    };
+
+    let printer = AlwaysFailPrinter;
+    let http = reqwest::Client::new();
+    // Use a non-existent base_url — exhaustion path does NOT call ack_job, so no HTTP hit.
+    let (conn, rows_processed) = brevly_print::retry_task::process_due_retries_once(
+        conn,
+        "test-token",
+        "http://127.0.0.1:1", // unreachable — ack not called on exhaustion
+        &http,
+        &printer,
+        &health_spy,
+    )
+    .await;
+
+    // ── Assertions ──────────────────────────────────────────────────────────
+
+    assert_eq!(rows_processed, 1, "one due row must have been processed");
+
+    // retry_queue must be DELETEd.
+    let rq_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM retry_queue WHERE job_id='job-ex2'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count retry_queue");
+    assert_eq!(rq_count, 0, "retry_queue row must be DELETEd after exhaustion");
+
+    // printed_jobs.status must be 'failed'.
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM printed_jobs WHERE job_id='job-ex2'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("SELECT status");
+    assert_eq!(status, "failed", "printed_jobs.status must be 'failed'");
+
+    // failed_at must be set.
+    let failed_at: Option<String> = conn
+        .query_row(
+            "SELECT failed_at FROM printed_jobs WHERE job_id='job-ex2'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("SELECT failed_at");
+    assert!(failed_at.is_some(), "failed_at must be set after exhaustion");
+
+    // send_health(Problem) must have been called exactly once.
+    let calls = health_calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "send_health must be called once (exhaustion)");
+    assert!(
+        matches!(calls[0], brevly_print::health_state::HealthState::Problem),
+        "send_health must receive HealthState::Problem on exhaustion; got: {:?}",
+        calls[0]
+    );
+}
+
+// ── RES-01/02: Retry task smoke ───────────────────────────────────────────────
+
+/// End-to-end smoke test: `process_due_retries_once` with an always-succeeding
+/// printer and a due row at `attempt_count=1` (first retry).
+///
+/// Uses a local HTTP stub that returns 200 for the `ack_job` POST.
+///
+/// After one call to the real poll-loop iteration body, asserts:
+///   1. `printed_jobs.status = 'printed'` with `printed_at` set.
+///   2. `retry_queue` row is DELETEd.
+///   3. `send_health(HealthState::Connected)` was called once.
+///
+/// This is the W-01 gap closure: the production loop's success path (print +
+/// UPDATE 'printed' + ack + DELETE) is executed end-to-end including the HTTP
+/// ack call and the `send_health` side-effect.
+#[tokio::test]
+async fn retry_task_smoke() {
+    let conn = make_migrated_conn();
+
+    // Seed printed_jobs first (FK constraint).
+    conn.execute(
+        "INSERT INTO printed_jobs (job_id, job_type, status) VALUES ('job-smoke', 'pedido', 'pending')",
+        [],
+    )
+    .expect("seed printed_jobs");
+
+    // Seed retry_queue — due immediately, attempt_count=1.
+    conn.execute(
+        "INSERT INTO retry_queue
+             (job_id, job_type, escpos_bytes, attempt_count, next_retry_at, last_error, created_at)
+         VALUES ('job-smoke', 'pedido', X'1b4041', 1, datetime('now','-1 second'), 'first fail', datetime('now'))",
+        [],
+    )
+    .expect("seed retry_queue");
+
+    // HTTP stub: return 200 for the ack POST.
+    let base_url = spawn_ack_stub(200).await;
+
+    // Health spy.
+    let health_calls: Arc<Mutex<Vec<brevly_print::health_state::HealthState>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let health_spy = {
+        let calls = Arc::clone(&health_calls);
+        move |state: brevly_print::health_state::HealthState| {
+            calls.lock().unwrap().push(state);
+        }
+    };
+
+    let printer = AlwaysOkPrinter;
+    let http = reqwest::Client::new();
+    let (conn, rows_processed) = brevly_print::retry_task::process_due_retries_once(
+        conn,
+        "test-token",
+        &base_url,
+        &http,
+        &printer,
+        &health_spy,
+    )
+    .await;
+
+    // ── Assertions ──────────────────────────────────────────────────────────
+
+    assert_eq!(rows_processed, 1, "one due row must have been processed");
+
+    // printed_jobs.status must be 'printed'.
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM printed_jobs WHERE job_id='job-smoke'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("SELECT status");
+    assert_eq!(status, "printed", "printed_jobs.status must be 'printed' after success");
+
+    // printed_at must be set.
+    let printed_at: Option<String> = conn
+        .query_row(
+            "SELECT printed_at FROM printed_jobs WHERE job_id='job-smoke'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("SELECT printed_at");
+    assert!(printed_at.is_some(), "printed_at must be set after successful retry");
+
+    // retry_queue must be DELETEd.
+    let rq_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM retry_queue WHERE job_id='job-smoke'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count retry_queue");
+    assert_eq!(rq_count, 0, "retry_queue row must be DELETEd after success");
+
+    // send_health(Connected) must have been called once.
+    let calls = health_calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "send_health must be called once (success)");
+    assert!(
+        matches!(calls[0], brevly_print::health_state::HealthState::Connected),
+        "send_health must receive HealthState::Connected on success; got: {:?}",
+        calls[0]
+    );
 }

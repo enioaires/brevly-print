@@ -46,8 +46,8 @@ pub async fn run_retry_task(
     agent_token: String,
     base_url: String,
     http: reqwest::Client,
-    printer: Box<dyn crate::printer::Printer + Send>,
-    send_health: impl Fn(HealthState) + Send + 'static,
+    printer: Box<dyn crate::printer::Printer + Send + Sync>,
+    send_health: impl Fn(HealthState) + Send + Sync + 'static,
 ) {
     // ── Startup: open a FOURTH SQLite connection (D-04) ─────────────────────
     let conn = match open_retry_conn(&db_path) {
@@ -197,8 +197,8 @@ pub async fn run_retry_poll_loop(
     agent_token: String,
     base_url: String,
     http: reqwest::Client,
-    printer: Box<dyn crate::printer::Printer + Send>,
-    send_health: impl Fn(HealthState) + Send + 'static,
+    printer: Box<dyn crate::printer::Printer + Send + Sync>,
+    send_health: impl Fn(HealthState) + Send + Sync + 'static,
 ) {
     let conn = match open_retry_conn(&db_path) {
         Some(c) => c,
@@ -207,14 +207,260 @@ pub async fn run_retry_poll_loop(
     run_poll_loop_on_conn(conn, agent_token, base_url, http, printer, send_health).await;
 }
 
+/// Collect all due `retry_queue` rows in a sync helper so the borrow of `conn`
+/// (via the prepared statement) is fully released before returning.
+///
+/// Called by [`process_due_retries_once`] so that `conn` is not borrowed when
+/// the caller crosses an `.await` boundary (owned `Connection: Send`, but
+/// `&Connection: !Send` because `Connection: !Sync`).
+fn collect_due_rows(conn: &rusqlite::Connection) -> Vec<(String, String, Option<Vec<u8>>, i64)> {
+    let mut stmt = match conn.prepare(
+        "SELECT job_id, job_type, escpos_bytes, attempt_count
+         FROM retry_queue
+         WHERE next_retry_at <= datetime('now')
+         ORDER BY next_retry_at ASC
+         LIMIT 10",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[brevly-print] Retry task: poll prepare failed: {e:#}");
+            return Vec::new();
+        }
+    };
+    match stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<Vec<u8>>>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    }) {
+        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+        Err(e) => {
+            eprintln!("[brevly-print] Retry task: poll query failed: {e:#}");
+            Vec::new()
+        }
+    }
+}
+
+/// Process one iteration of the retry poll loop (D-06, single tick body).
+///
+/// Queries all due `retry_queue` rows (next_retry_at <= now), then for each row:
+/// - Sets `printed_jobs.status='printing'` (crash fence).
+/// - Calls `printer.print_raw()`.
+/// - On success: marks `'printed'`, acks the job (HTTP POST), deletes from queue,
+///   fires `send_health(Connected)`.
+/// - On failure with attempt_count < 3: reschedules in 30s.
+/// - On failure with attempt_count >= 3: marks `'failed'`, deletes from queue,
+///   fires `send_health(Problem)`, and shows the Windows toast.
+///
+/// **Two-phase structure for Send-safety:**
+///
+/// `printer` and `send_health` are not `Sync`, so references to them cannot cross
+/// an `.await` boundary in a `Send` future. This function is therefore split into:
+///
+/// 1. **Sync phase** — runs the printer, updates all SQL state, and collects job_ids
+///    that printed successfully and need acking. `printer` and `send_health` are not
+///    held across any `.await`.
+///
+/// 2. **Async phase** — iterates over successful job_ids, calls `ack_job` (HTTP POST),
+///    and deletes them from `retry_queue`. Only `conn`, `http`, `base_url`, and
+///    `agent_token` are live across each `.await` — all of which are `Send`.
+///
+/// C4 ordering is preserved: `status='printed'` is set in the sync phase (step 1)
+/// BEFORE ack is attempted in the async phase (step 2), and DELETE happens after ack.
+///
+/// Takes `conn` by value and returns `(conn, rows_processed)` so the future is `Send`
+/// (owned `rusqlite::Connection: Send`; `&Connection` is not, because `Connection:
+/// !Sync`). Returning `conn` lets the poll loop reuse it without extra allocation.
+///
+/// This function is `pub` so integration tests in `tests/` can call it directly
+/// on a test-seeded connection without running the 5-second timer loop.
+pub async fn process_due_retries_once(
+    conn: rusqlite::Connection,
+    agent_token: &str,
+    base_url: &str,
+    http: &reqwest::Client,
+    printer: &(dyn crate::printer::Printer + Send + Sync),
+    send_health: &(dyn Fn(HealthState) + Send + Sync),
+) -> (rusqlite::Connection, usize) {
+    // ── Phase 1: sync — print, update SQL state, collect ack candidates ──────
+    //
+    // `collect_due_rows` holds the `stmt` borrow of `conn` and drops it before
+    // returning — the rest of phase 1 is sync and does not cross any `.await`.
+    let rows = collect_due_rows(&conn);
+    let processed = rows.len();
+
+    // Collect job_ids that printed successfully and need an HTTP ack + DELETE.
+    // Populated during the sync loop below; consumed in phase 2 (async ack loop).
+    let mut to_ack: Vec<String> = Vec::new();
+
+    for (job_id, _job_type, escpos_bytes, attempt_count) in rows {
+        // WR-02: a NULL or empty blob can never print. Mark the job 'failed' and
+        // remove it from the queue instead of looping forever on an unprintable row.
+        let escpos_bytes = match escpos_bytes {
+            Some(b) if !b.is_empty() => b,
+            _ => {
+                eprintln!(
+                    "[brevly-print] Retry task: job {job_id} has NULL/empty escpos_bytes — marking failed and removing from queue"
+                );
+                match conn.execute(
+                    "UPDATE printed_jobs SET status='failed', failed_at=datetime('now') WHERE job_id=?1",
+                    rusqlite::params![job_id],
+                ) {
+                    Ok(0) => eprintln!(
+                        "[brevly-print] Retry task: NULL-bytes UPDATE to 'failed' matched 0 rows for {job_id} — row absent"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => eprintln!(
+                        "[brevly-print] Retry task: NULL-bytes UPDATE to 'failed' failed for {job_id}: {e:#}"
+                    ),
+                }
+                if let Err(e) = conn.execute(
+                    "DELETE FROM retry_queue WHERE job_id=?1",
+                    rusqlite::params![job_id],
+                ) {
+                    eprintln!(
+                        "[brevly-print] Retry task: NULL-bytes DELETE from retry_queue failed for {job_id}: {e:#}"
+                    );
+                }
+                send_health(HealthState::Problem);
+                show_print_failure_toast();
+                continue;
+            }
+        };
+
+        // Crash fence: set status='printing' before each retry attempt so a crash
+        // mid-retry does not leave the row orphaned from retry_queue (D-06 step 1).
+        // Log but continue on failure — same tolerance as print_worker's fence.
+        match conn.execute(
+            "UPDATE printed_jobs SET status='printing' WHERE job_id=?1",
+            rusqlite::params![job_id],
+        ) {
+            Ok(0) => eprintln!(
+                "[brevly-print] Retry task: UPDATE to 'printing' matched 0 rows for {job_id} — row absent"
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "[brevly-print] Retry task: SQLite update to 'printing' failed for {job_id}: {e:#}"
+            ),
+        }
+
+        match printer.print_raw(&escpos_bytes) {
+            Ok(()) => {
+                // C4 ordering: UPDATE status='printed' BEFORE ack_job BEFORE DELETE.
+                // The ack + DELETE happen in phase 2 (below); status='printed' is set
+                // here so it is persisted BEFORE any await.
+                if let Err(e) = conn.execute(
+                    "UPDATE printed_jobs SET status='printed', printed_at=datetime('now') WHERE job_id=?1",
+                    rusqlite::params![job_id],
+                ) {
+                    eprintln!(
+                        "[brevly-print] Retry task: UPDATE to 'printed' failed for {job_id}: {e:#}"
+                    );
+                }
+                eprintln!("[brevly-print] Retry task: job {job_id} printed successfully on retry");
+                send_health(HealthState::Connected);
+                to_ack.push(job_id);
+            }
+            Err(e) if attempt_count < 3 => {
+                // Not yet exhausted: schedule next retry in 30 seconds.
+                // WR-01: log the actual attempt number consistently as "attempt N of 3".
+                // attempt_count is the pre-increment value; this is the Nth attempt that
+                // just failed (seeded at 1 by the worker's original failed print).
+                let msg = e.to_string();
+                if let Err(db_err) = conn.execute(
+                    "UPDATE retry_queue SET attempt_count=attempt_count+1,
+                         next_retry_at=datetime('now', '+30 seconds'), last_error=?2
+                     WHERE job_id=?1",
+                    rusqlite::params![job_id, msg],
+                ) {
+                    eprintln!(
+                        "[brevly-print] Retry task: reschedule UPDATE failed for {job_id}: {db_err:#}"
+                    );
+                }
+                eprintln!(
+                    "[brevly-print] Retry task: job {job_id} attempt {attempt_count} of 3 failed ({msg}); scheduled retry in 30s"
+                );
+            }
+            Err(e) => {
+                // attempt_count >= 3: exhausted (D-06 step 5 / RES-02).
+                // WR-01: this is the exhausting attempt (attempt_count == 3), logged
+                // consistently with the per-attempt line above ("attempt 3 of 3").
+                let msg = e.to_string();
+                eprintln!(
+                    "[brevly-print] Retry task: job {job_id} attempt {attempt_count} of 3 failed ({msg}); exhausted — marking failed"
+                );
+                // WR-04: check the exhaustion UPDATE result. If it silently fails, the
+                // row is deleted from the queue but left 'printing', becoming a permanent
+                // orphan that crash recovery re-queues on every boot.
+                match conn.execute(
+                    "UPDATE printed_jobs SET status='failed', failed_at=datetime('now') WHERE job_id=?1",
+                    rusqlite::params![job_id],
+                ) {
+                    Ok(0) => eprintln!(
+                        "[brevly-print] Retry task: exhaustion UPDATE to 'failed' matched 0 rows for {job_id} — row absent"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => eprintln!(
+                        "[brevly-print] Retry task: exhaustion UPDATE to 'failed' failed for {job_id}: {e:#} — row may be left orphaned at 'printing'"
+                    ),
+                }
+                if let Err(e) = conn.execute(
+                    "DELETE FROM retry_queue WHERE job_id=?1",
+                    rusqlite::params![job_id],
+                ) {
+                    eprintln!(
+                        "[brevly-print] Retry task: exhaustion DELETE from retry_queue failed for {job_id}: {e:#}"
+                    );
+                }
+                send_health(HealthState::Problem);
+                show_print_failure_toast();
+            }
+        }
+    }
+    // Phase 1 complete: `printer` and `send_health` are no longer referenced.
+    // `conn`, `http`, `base_url`, `agent_token` (all Send) carry forward to phase 2.
+
+    // ── Phase 2: async — ack successfully printed jobs, then DELETE from queue ──
+    //
+    // Only `conn` (owned, Send), `http` (&reqwest::Client, Send), and string refs
+    // are live across the `.await` here — no non-Sync references in scope.
+    for job_id in to_ack {
+        if let Err(e) = ack_job(http, base_url, agent_token, &job_id).await {
+            eprintln!("[brevly-print] Retry task: ack failed for {job_id}: {e:#}");
+            // ack failure is non-fatal — status='printed' is already persisted;
+            // RES-03 pending pull handles recovery (D-09 carry-forward).
+        }
+        // WR-04: check the DELETE result. If it silently affects 0 rows (or
+        // errors under contention), the job stays in retry_queue and would be
+        // re-printed on the next poll — a duplicate comanda. Log so the drift
+        // is visible.
+        match conn.execute(
+            "DELETE FROM retry_queue WHERE job_id=?1",
+            rusqlite::params![job_id],
+        ) {
+            Ok(0) => eprintln!(
+                "[brevly-print] Retry task: DELETE after success matched 0 rows for {job_id} — risk of duplicate reprint on next poll"
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "[brevly-print] Retry task: DELETE from retry_queue failed for {job_id}: {e:#} — risk of duplicate reprint"
+            ),
+        }
+    }
+
+    (conn, processed)
+}
+
 /// The retry poll loop body, operating on an already-open connection (D-06).
 async fn run_poll_loop_on_conn(
-    conn: rusqlite::Connection,
+    mut conn: rusqlite::Connection,
     agent_token: String,
     base_url: String,
     http: reqwest::Client,
-    printer: Box<dyn crate::printer::Printer + Send>,
-    send_health: impl Fn(HealthState) + Send + 'static,
+    printer: Box<dyn crate::printer::Printer + Send + Sync>,
+    send_health: impl Fn(HealthState) + Send + Sync + 'static,
 ) {
     // ── Poll loop (D-06) ────────────────────────────────────────────────────
     //
@@ -227,184 +473,15 @@ async fn run_poll_loop_on_conn(
 
     loop {
         poll_timer.tick().await;
-
-        // Collect all due rows (next_retry_at <= now), ordered oldest-first,
-        // up to 10 at a time (queue rarely exceeds a handful of rows — D-06).
-        // WR-02: read escpos_bytes as Option<Vec<u8>> so a NULL blob does not cause
-        // the whole row to be silently dropped by filter_map (which would leave the
-        // row stuck forever in retry_queue, never processed and never exhausted).
-        let rows: Vec<(String, String, Option<Vec<u8>>, i64)> = {
-            let mut stmt = match conn.prepare(
-                "SELECT job_id, job_type, escpos_bytes, attempt_count
-                 FROM retry_queue
-                 WHERE next_retry_at <= datetime('now')
-                 ORDER BY next_retry_at ASC
-                 LIMIT 10",
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[brevly-print] Retry task: poll prepare failed: {e:#}");
-                    continue;
-                }
-            };
-            match stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<Vec<u8>>>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            }) {
-                Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
-                Err(e) => {
-                    eprintln!("[brevly-print] Retry task: poll query failed: {e:#}");
-                    Vec::new()
-                }
-            }
-        };
-
-        for (job_id, _job_type, escpos_bytes, attempt_count) in rows {
-            // WR-02: a NULL or empty blob can never print. Mark the job 'failed' and
-            // remove it from the queue instead of looping forever on an unprintable row.
-            let escpos_bytes = match escpos_bytes {
-                Some(b) if !b.is_empty() => b,
-                _ => {
-                    eprintln!(
-                        "[brevly-print] Retry task: job {job_id} has NULL/empty escpos_bytes — marking failed and removing from queue"
-                    );
-                    match conn.execute(
-                        "UPDATE printed_jobs SET status='failed', failed_at=datetime('now') WHERE job_id=?1",
-                        rusqlite::params![job_id],
-                    ) {
-                        Ok(0) => eprintln!(
-                            "[brevly-print] Retry task: NULL-bytes UPDATE to 'failed' matched 0 rows for {job_id} — row absent"
-                        ),
-                        Ok(_) => {}
-                        Err(e) => eprintln!(
-                            "[brevly-print] Retry task: NULL-bytes UPDATE to 'failed' failed for {job_id}: {e:#}"
-                        ),
-                    }
-                    if let Err(e) = conn.execute(
-                        "DELETE FROM retry_queue WHERE job_id=?1",
-                        rusqlite::params![job_id],
-                    ) {
-                        eprintln!(
-                            "[brevly-print] Retry task: NULL-bytes DELETE from retry_queue failed for {job_id}: {e:#}"
-                        );
-                    }
-                    send_health(HealthState::Problem);
-                    show_print_failure_toast();
-                    continue;
-                }
-            };
-
-            // Crash fence: set status='printing' before each retry attempt so a crash
-            // mid-retry does not leave the row orphaned from retry_queue (D-06 step 1).
-            // Log but continue on failure — same tolerance as print_worker's fence.
-            match conn.execute(
-                "UPDATE printed_jobs SET status='printing' WHERE job_id=?1",
-                rusqlite::params![job_id],
-            ) {
-                Ok(0) => eprintln!(
-                    "[brevly-print] Retry task: UPDATE to 'printing' matched 0 rows for {job_id} — row absent"
-                ),
-                Ok(_) => {}
-                Err(e) => eprintln!(
-                    "[brevly-print] Retry task: SQLite update to 'printing' failed for {job_id}: {e:#}"
-                ),
-            }
-
-            match printer.print_raw(&escpos_bytes) {
-                Ok(()) => {
-                    // C4 ordering: UPDATE status='printed' BEFORE ack_job BEFORE DELETE.
-                    if let Err(e) = conn.execute(
-                        "UPDATE printed_jobs SET status='printed', printed_at=datetime('now') WHERE job_id=?1",
-                        rusqlite::params![job_id],
-                    ) {
-                        eprintln!(
-                            "[brevly-print] Retry task: UPDATE to 'printed' failed for {job_id}: {e:#}"
-                        );
-                    }
-                    if let Err(e) = ack_job(&http, &base_url, &agent_token, &job_id).await {
-                        eprintln!("[brevly-print] Retry task: ack failed for {job_id}: {e:#}");
-                        // ack failure is non-fatal — status='printed' is already persisted;
-                        // RES-03 pending pull handles recovery (D-09 carry-forward).
-                    }
-                    // WR-04: check the DELETE result. If it silently affects 0 rows (or
-                    // errors under contention), the job stays in retry_queue and would be
-                    // re-printed on the next poll — a duplicate comanda. Log so the drift
-                    // is visible.
-                    match conn.execute(
-                        "DELETE FROM retry_queue WHERE job_id=?1",
-                        rusqlite::params![job_id],
-                    ) {
-                        Ok(0) => eprintln!(
-                            "[brevly-print] Retry task: DELETE after success matched 0 rows for {job_id} — risk of duplicate reprint on next poll"
-                        ),
-                        Ok(_) => {}
-                        Err(e) => eprintln!(
-                            "[brevly-print] Retry task: DELETE from retry_queue failed for {job_id}: {e:#} — risk of duplicate reprint"
-                        ),
-                    }
-                    eprintln!("[brevly-print] Retry task: job {job_id} printed successfully on retry");
-                    send_health(HealthState::Connected);
-                }
-                Err(e) if attempt_count < 3 => {
-                    // Not yet exhausted: schedule next retry in 30 seconds.
-                    // WR-01: log the actual attempt number consistently as "attempt N of 3".
-                    // attempt_count is the pre-increment value; this is the Nth attempt that
-                    // just failed (seeded at 1 by the worker's original failed print).
-                    let msg = e.to_string();
-                    if let Err(db_err) = conn.execute(
-                        "UPDATE retry_queue SET attempt_count=attempt_count+1,
-                             next_retry_at=datetime('now', '+30 seconds'), last_error=?2
-                         WHERE job_id=?1",
-                        rusqlite::params![job_id, msg],
-                    ) {
-                        eprintln!(
-                            "[brevly-print] Retry task: reschedule UPDATE failed for {job_id}: {db_err:#}"
-                        );
-                    }
-                    eprintln!(
-                        "[brevly-print] Retry task: job {job_id} attempt {attempt_count} of 3 failed ({msg}); scheduled retry in 30s"
-                    );
-                }
-                Err(e) => {
-                    // attempt_count >= 3: exhausted (D-06 step 5 / RES-02).
-                    // WR-01: this is the exhausting attempt (attempt_count == 3), logged
-                    // consistently with the per-attempt line above ("attempt 3 of 3").
-                    let msg = e.to_string();
-                    eprintln!(
-                        "[brevly-print] Retry task: job {job_id} attempt {attempt_count} of 3 failed ({msg}); exhausted — marking failed"
-                    );
-                    // WR-04: check the exhaustion UPDATE result. If it silently fails, the
-                    // row is deleted from the queue but left 'printing', becoming a permanent
-                    // orphan that crash recovery re-queues on every boot.
-                    match conn.execute(
-                        "UPDATE printed_jobs SET status='failed', failed_at=datetime('now') WHERE job_id=?1",
-                        rusqlite::params![job_id],
-                    ) {
-                        Ok(0) => eprintln!(
-                            "[brevly-print] Retry task: exhaustion UPDATE to 'failed' matched 0 rows for {job_id} — row absent"
-                        ),
-                        Ok(_) => {}
-                        Err(e) => eprintln!(
-                            "[brevly-print] Retry task: exhaustion UPDATE to 'failed' failed for {job_id}: {e:#} — row may be left orphaned at 'printing'"
-                        ),
-                    }
-                    if let Err(e) = conn.execute(
-                        "DELETE FROM retry_queue WHERE job_id=?1",
-                        rusqlite::params![job_id],
-                    ) {
-                        eprintln!(
-                            "[brevly-print] Retry task: exhaustion DELETE from retry_queue failed for {job_id}: {e:#}"
-                        );
-                    }
-                    send_health(HealthState::Problem);
-                    show_print_failure_toast();
-                }
-            }
-        }
+        (conn, _) = process_due_retries_once(
+            conn,
+            &agent_token,
+            &base_url,
+            &http,
+            printer.as_ref(),
+            &send_health,
+        )
+        .await;
     }
 }
 
