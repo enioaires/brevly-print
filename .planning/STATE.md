@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 current_plan: 1
-status: ready_to_execute
-last_updated: "2026-07-15T23:59:00.000Z"
+status: executing
+last_updated: "2026-07-16T01:37:54.480Z"
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 0
+  total_plans: 6
+  completed_plans: 3
   percent: 14
 ---
 
@@ -28,12 +28,12 @@ comanda perdida, mesmo com impressora ou internet fora do ar.
 
 ## Current Position
 
-Phase: 02 (activation) — PLANNED, READY TO EXECUTE
-Plan: 1 of 3 (3 plans, 2 waves)
+Phase: 02 (activation) — EXECUTING
+Plan: 1 of 3
 **Milestone:** v1 MVP
 **Current Phase:** 02
 **Current Plan:** 1
-**Status:** Phase 02 PLANNED (research + UI-SPEC + 3 plans, verified). Ready to execute (`/gsd:execute-phase 2`). NOTE: final E2E verification blocked on Noren `POST /api/agent/activate`; all plan tasks executable now via Linux stubs + mockable seam.
+**Status:** Executing Phase 02
 
 ```
 Progress: [█░░░░░░] 1/7 phases complete
