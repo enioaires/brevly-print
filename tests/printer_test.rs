@@ -14,6 +14,7 @@ use brevly_print::printer::{enumerate_printers, printer_from_entry, PrinterId};
 ///
 /// On Windows this would return installed printers + COM ports.
 /// On Linux the cfg-gated stub always returns `vec![]`.
+#[cfg(not(windows))]
 #[test]
 fn test_enumerate_printers_empty_on_linux() {
     // cfg(not(windows)) → stub path → always empty
