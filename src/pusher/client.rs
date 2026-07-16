@@ -313,30 +313,27 @@ pub async fn run_pusher_loop(
                     match insert_print_job(&pusher_conn, &job.job_id, &job.job_type) {
                         Ok(true) => {
                             // New job — forward to print worker with WR-04 try_send pattern.
-                            match tx.try_send(PrintEvent {
-                                job_id: job.job_id.clone(),
-                                job_type: job.job_type,
-                            }) {
+                            // WR-03: the pending pull runs BEFORE the inner select! loop
+                            // (no ping timer to starve here), so forward inline with a
+                            // bounded, FIFO-preserving `send().await`. This applies natural
+                            // backpressure to the drain and never spawns unbounded detached
+                            // tasks that could deliver jobs out of order.
+                            match tx
+                                .send(PrintEvent {
+                                    job_id: job.job_id.clone(),
+                                    job_type: job.job_type,
+                                })
+                                .await
+                            {
                                 Ok(()) => {}
-                                Err(tokio::sync::mpsc::error::TrySendError::Full(ev)) => {
-                                    eprintln!(
-                                        "[brevly-print] Pusher: pending pull channel full — \
-                                         job {} queued via background send",
-                                        ev.job_id
-                                    );
-                                    let tx2 = tx.clone();
-                                    tokio::spawn(async move {
-                                        let _ = tx2.send(ev).await;
-                                    });
-                                }
-                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                Err(_closed) => {
                                     eprintln!(
                                         "[brevly-print] Pusher: print channel closed during pending pull"
                                     );
                                     // Break out of the for loop; the inner select! loop has
                                     // not been entered yet, so we cannot use 'inner here.
                                     // The outer reconnect loop detects the closed channel on
-                                    // the next tx.try_send inside the inner event loop.
+                                    // the next send inside the inner event loop.
                                     break;
                                 }
                             }
@@ -397,24 +394,36 @@ pub async fn run_pusher_loop(
                                             match insert_print_job(&pusher_conn, &event.job_id, &event.job_type) {
                                                 Ok(true) => {
                                                     // New event — send to Phase 5 worker.
-                                                    // WR-04: use try_send to avoid blocking inside
-                                                    // the select! arm; a blocking .await here would
-                                                    // starve the ping_timer arm and disable zombie
-                                                    // detection for the duration of any channel backlog.
+                                                    // WR-03 / WR-04: forward with a single in-order send.
+                                                    // try_send first (fast path, no await). On Full, fall
+                                                    // back to an inline `send().await` — NOT a detached
+                                                    // tokio::spawn. A detached task would let a later job
+                                                    // overtake this one (out-of-order kitchen tickets) and
+                                                    // grow unbounded under a stuck worker. The inline await
+                                                    // preserves strict FIFO and applies backpressure.
+                                                    //
+                                                    // Tradeoff (documented): while the channel is full the
+                                                    // ping timer arm is delayed, so zombie detection is
+                                                    // paused for the duration of the backlog. This is
+                                                    // acceptable — a worker that cannot accept a job for
+                                                    // seconds is itself the problem, and the job must not be
+                                                    // dropped or reordered to keep pings flowing. The row is
+                                                    // already persisted at 'pending' (insert_print_job
+                                                    // above), so no comanda is lost even if we block here.
                                                     match tx.try_send(event) {
                                                         Ok(()) => {}
                                                         Err(tokio::sync::mpsc::error::TrySendError::Full(ev)) => {
-                                                            // Channel full — fall back to a spawned task so
-                                                            // the ping timer is not blocked while we wait.
                                                             eprintln!(
                                                                 "[brevly-print] Pusher: print channel full — \
-                                                                 job {} queued via background send",
+                                                                 job {} waiting (inline FIFO send)",
                                                                 ev.job_id
                                                             );
-                                                            let tx2 = tx.clone();
-                                                            tokio::spawn(async move {
-                                                                let _ = tx2.send(ev).await;
-                                                            });
+                                                            if tx.send(ev).await.is_err() {
+                                                                eprintln!(
+                                                                    "[brevly-print] Pusher: print channel closed — exiting"
+                                                                );
+                                                                break 'inner true;
+                                                            }
                                                         }
                                                         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                                                             eprintln!(
@@ -497,21 +506,14 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
-    /// Create an in-memory SQLite connection with the printed_jobs schema.
+    /// Create an in-memory SQLite connection at the real production schema.
+    ///
+    /// IN-04: run the actual `MIGRATIONS.to_latest()` (via `config_store::migrate`)
+    /// instead of a hand-rolled schema, so the `status` CHECK constraint and the
+    /// `retry_queue → printed_jobs` FK are present and tests cannot drift from prod.
     fn make_test_conn() -> Connection {
-        let conn = Connection::open_in_memory().expect("in-memory DB");
-        conn.execute_batch(
-            "CREATE TABLE printed_jobs (
-                job_id      TEXT PRIMARY KEY NOT NULL,
-                job_type    TEXT,
-                status      TEXT NOT NULL DEFAULT 'pending',
-                attempt     INTEGER NOT NULL DEFAULT 0,
-                received_at TEXT,
-                printed_at  TEXT,
-                failed_at   TEXT
-            );",
-        )
-        .expect("create test schema");
+        let mut conn = Connection::open_in_memory().expect("in-memory DB");
+        crate::config_store::migrate(&mut conn).expect("run migrations on in-memory DB");
         conn
     }
 

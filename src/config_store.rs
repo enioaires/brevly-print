@@ -122,6 +122,21 @@ pub fn open_and_migrate(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Run all pending migrations against an already-open connection (IN-04).
+///
+/// Used by tests to bring an in-memory connection to the latest production schema
+/// (`MIGRATIONS.to_latest`) so test schemas cannot drift from production — e.g. the
+/// `status` CHECK constraint and the `retry_queue → printed_jobs` FK are exercised.
+///
+/// # Errors
+///
+/// Returns a `rusqlite::Error` (wrapping the migration error) if migrations fail.
+pub fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
+    MIGRATIONS
+        .to_latest(conn)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+}
+
 /// Apply the shared WAL PRAGMA setup to a freshly-opened connection (CR-01 / WR-07).
 ///
 /// Every background task (main App, Pusher, print worker, retry task) opens its own

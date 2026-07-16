@@ -95,6 +95,47 @@ pub fn printer_from_entry(id: &PrinterId) -> Box<dyn Printer> {
     }
 }
 
+/// Build a [`PrinterId`] from the persisted `printer_name` / `printer_type` config
+/// (IN-01: single source of truth shared by the print worker and the retry task, so
+/// the two cannot diverge; WR-05: validate `printer_type` instead of silently
+/// defaulting any unexpected value to the spooler).
+///
+/// Returns `None` (after logging) when `printer_name` is missing/empty — activation
+/// is incomplete and the caller should not construct a printer.
+///
+/// `printer_type` is matched explicitly on `"serial" | "spooler"`. Any other value
+/// (missing key, empty string, typo, or corruption) is logged and treated as
+/// `"spooler"` — the safest default for the common USB case — rather than routed
+/// silently. This makes a misconfigured `printer_type` visible in the logs.
+pub fn printer_id_from_config(conn: &rusqlite::Connection) -> Option<PrinterId> {
+    let printer_name = match crate::config_store::get(conn, "printer_name")
+        .unwrap_or(None)
+        .filter(|s| !s.is_empty())
+    {
+        Some(name) => name,
+        None => {
+            eprintln!("[brevly-print] printer_name missing/empty from ConfigStore");
+            return None;
+        }
+    };
+
+    let printer_type = crate::config_store::get(conn, "printer_type")
+        .unwrap_or(None)
+        .unwrap_or_default();
+
+    let id = match printer_type.as_str() {
+        "serial" => PrinterId::Serial(printer_name),
+        "spooler" => PrinterId::Spooler(printer_name),
+        other => {
+            eprintln!(
+                "[brevly-print] Unexpected printer_type '{other}' — defaulting to spooler (WR-05)"
+            );
+            PrinterId::Spooler(printer_name)
+        }
+    };
+    Some(id)
+}
+
 // ── Windows-only enumeration ─────────────────────────────────────────────────
 
 /// Enumerate Windows printers (spooler + COM ports) into a combined list.
