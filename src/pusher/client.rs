@@ -36,7 +36,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::{
     health_state::HealthState,
-    noren_client::pusher_auth,
+    noren_client::{fetch_pending_jobs, pusher_auth, validate_job_id},
     pusher::{
         backoff::backoff_delay,
         protocol::{extract_socket_id, parse_print_job, PrintEvent, PusherConfig, PusherEnvelope},
@@ -290,6 +290,72 @@ pub async fn run_pusher_loop(
         send_health(HealthState::Connected);
         // Reset attempt counter on successful connect
         attempt = 0;
+
+        // RES-03: pull pending jobs on every successful Pusher reconnect (D-08).
+        // This covers internet-outage recovery: Noren queues missed jobs server-side;
+        // we drain them here before entering the live event loop.
+        // Error handling: log + continue — a failed pull MUST NOT reconnect/tear down
+        // the WebSocket; the next reconnect will retry (D-08 invariant).
+        match fetch_pending_jobs(&http, &config.auth_url, &agent_token).await {
+            Ok(pending) => {
+                for job in pending {
+                    // CR-02 GUARD (SECURITY — mandatory): validate job_id BEFORE insert.
+                    // Rejects path traversal characters (/  .  \  ?  #  %  NUL).
+                    if let Err(e) = validate_job_id(&job.job_id) {
+                        eprintln!(
+                            "[brevly-print] Pusher: pending pull rejected invalid job_id: {e:#}"
+                        );
+                        continue;
+                    }
+                    match insert_print_job(&pusher_conn, &job.job_id, &job.job_type) {
+                        Ok(true) => {
+                            // New job — forward to print worker with WR-04 try_send pattern.
+                            match tx.try_send(PrintEvent {
+                                job_id: job.job_id.clone(),
+                                job_type: job.job_type,
+                            }) {
+                                Ok(()) => {}
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(ev)) => {
+                                    eprintln!(
+                                        "[brevly-print] Pusher: pending pull channel full — \
+                                         job {} queued via background send",
+                                        ev.job_id
+                                    );
+                                    let tx2 = tx.clone();
+                                    tokio::spawn(async move {
+                                        let _ = tx2.send(ev).await;
+                                    });
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                    eprintln!(
+                                        "[brevly-print] Pusher: print channel closed during pending pull"
+                                    );
+                                    // Break out of the for loop; the inner select! loop has
+                                    // not been entered yet, so we cannot use 'inner here.
+                                    // The outer reconnect loop detects the closed channel on
+                                    // the next tx.try_send inside the inner event loop.
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            // Already in printed_jobs — C3 dedup fence; no-op.
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[brevly-print] Pusher: pending pull SQLite insert failed: {e:#}"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[brevly-print] Pusher: pending pull failed — {e:#} (will retry on next reconnect)"
+                );
+                // Fall through to the inner event loop — WebSocket stays up (D-08).
+            }
+        }
 
         // Step 7: inner event loop — ping/pong zombie detection + event dispatch
         let mut ping_timer = interval(Duration::from_secs(30));
