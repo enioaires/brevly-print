@@ -79,7 +79,7 @@
   3. When the internet connection drops for more than 5 minutes and is restored, the agent detects the zombie connection (via ping/pong timeout), reconnects with exponential backoff, re-authenticates with the new `socket_id`, re-subscribes to the channel, and the tray transitions yellow then green — no events missed
   4. Channel auth is re-requested from `/api/agent/pusher/auth` on every reconnect using the fresh `socket_id`; cached auth strings are never reused
 **Plans**: 2 plans (2 waves)
-- [ ] 04-01-PLAN.md — Tested primitives: futures-util+rand deps, D-01 config persistence fix, pusher protocol types+parsers (double-decode, socket_id), backoff, pusher_auth() + HTTP-contract tests (EVT-01/02/03 seams)
+- [x] 04-01-PLAN.md — Tested primitives: futures-util+rand deps, D-01 config persistence fix, pusher protocol types+parsers (double-decode, socket_id), backoff, pusher_auth() + HTTP-contract tests (EVT-01/02/03 seams)
 - [ ] 04-02-PLAN.md — Vertical slice: run_pusher_loop reconnect state machine (connect→fresh auth→subscribe→ping/pong zombie→backoff), INSERT OR IGNORE dedup fence, debug fake-event shim, main.rs Runtime-mode wiring (EVT-01/02/03 runtime)
 
 ### Phase 5: Job Pipeline
@@ -131,7 +131,7 @@
 | 1. Foundation + Thread Model Spike | 3/3 | Complete | 2026-07-15 |
 | 2. Activation | 3/3 | Complete   | 2026-07-16 |
 | 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
-| 4. Pusher Event Stream | 0/2 | Planned | - |
+| 4. Pusher Event Stream | 1/2 | In Progress|  |
 | 5. Job Pipeline | 0/0 | Not started | - |
 | 6. Resilience | 0/0 | Not started | - |
 | 7. Auto-Update + Distribution Polish | 0/0 | Not started | - |
