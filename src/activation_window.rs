@@ -482,13 +482,13 @@ fn render_form(
     ui.label(RichText::new("Serial").text_style(TextStyle::Body));
     ui.add_space(4.0); // xs
 
-    let serial_before = state.serial_input.clone();
+    // WR-03: use TextEdit response.changed() instead of cloning the serial string every frame.
     let serial_response = ui.add(
         egui::TextEdit::singleline(&mut state.serial_input)
             .hint_text("Cole ou digite o serial")
             .desired_width(f32::INFINITY),
     );
-    if state.serial_input != serial_before {
+    if serial_response.changed() {
         state.on_serial_changed();
     }
 
