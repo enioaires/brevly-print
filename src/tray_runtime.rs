@@ -62,6 +62,22 @@ impl TrayRuntime {
         self.menu_items.status.set_text(health.status_label());
     }
 
+    /// Update the status-line text and tooltip to the "update ready" message (D-04).
+    ///
+    /// Called from `App::user_event(UserEvent::UpdateStaged)` on the event-loop thread.
+    ///
+    /// IMPORTANT: does NOT call `set_icon` — the tray icon color is reserved for
+    /// connection health state (Phase 3 D-01/D-02). "Update ready" is orthogonal and
+    /// lives only in the status-line text + the one-shot toast (D-04).
+    pub fn set_update_status(&self) {
+        self.menu_items.status.set_text(
+            "Atualização pronta — será aplicada ao reiniciar"
+        );
+        let _ = self.tray.set_tooltip(Some(
+            "Brevly Print — Atualização pronta"
+        ));
+    }
+
     /// Expose tray menu item IDs for menu event dispatch in `App`.
     pub fn menu_items(&self) -> &TrayMenuItems {
         &self.menu_items

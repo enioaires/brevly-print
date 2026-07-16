@@ -68,6 +68,9 @@ enum UserEvent {
     #[cfg(windows)]
     MenuEvent(tray_icon::menu::MenuEvent),
     HealthChanged(HealthState),
+    /// Background update task: update downloaded, verified, and staged (D-04).
+    /// Triggers tray status-line update + one-shot toast. Once per session.
+    UpdateStaged,
 }
 
 // ── Application state ────────────────────────────────────────────────────────
@@ -213,6 +216,17 @@ impl ApplicationHandler<UserEvent> for App {
                 // Suppress unused variable warning on Linux where tray_runtime field is absent.
                 let _ = event_loop;
             }
+            UserEvent::UpdateStaged => {
+                // Update the tray status line (Windows-only). Icon color unchanged (D-04).
+                #[cfg(windows)]
+                if let Some(rt) = &self.tray_runtime {
+                    rt.set_update_status();
+                }
+                // One-shot toast — the once-per-session gate lives in run_update_check_loop.
+                show_update_ready_toast();
+                // Suppress unused variable warning on Linux.
+                let _ = event_loop;
+            }
         }
     }
 
@@ -269,6 +283,61 @@ impl App {
             }
         }
         // status item is disabled; no action expected
+    }
+}
+
+// ── Update helpers ───────────────────────────────────────────────────────────
+
+/// Show a one-shot Windows toast when an update is staged (D-04).
+///
+/// Pattern: identical to `show_print_failure_toast()` in `retry_task.rs:488–504`.
+/// Fire-and-forget — `let _ = .show()`. On Linux: logs to stderr (build compat).
+fn show_update_ready_toast() {
+    #[cfg(windows)]
+    {
+        use tauri_winrt_notification::Toast;
+        let _ = Toast::new(Toast::POWERSHELL_APP_ID)
+            .title("Brevly Print")
+            .text1("Atualização pronta. Será aplicada no próximo reinício.")
+            .show();
+    }
+    #[cfg(not(windows))]
+    eprintln!("[brevly-print] Update staged (Linux: stderr only)");
+}
+
+/// Background update-check loop — fifth Tokio sibling (D-03).
+///
+/// - 10s startup delay so the tray is visible and Pusher connect is underway (D-03).
+/// - Polls `try_check_and_stage` every ~6h.
+/// - On staged update: sends `UserEvent::UpdateStaged` once via proxy (D-04).
+///   `update_staged` flag prevents double-toast on subsequent polls.
+/// - On failure: `eprintln!` + continue; never panics, never blocks printing (SC-1).
+/// - `agent_token` is NEVER interpolated into any log string (T-02-02).
+async fn run_update_check_loop(
+    http: reqwest::Client,
+    base_url: String,
+    agent_token: String,
+    proxy: winit::event_loop::EventLoopProxy<UserEvent>,
+) {
+    // D-03: startup delay — tray must be visible, Pusher connect underway.
+    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+
+    // Once-per-session gate: after an update is staged, skip staging on re-polls (D-04).
+    let mut update_staged = false;
+
+    loop {
+        if !update_staged {
+            match brevly_print::update::try_check_and_stage(&http, &base_url, &agent_token).await {
+                Ok(true) => {
+                    let _ = proxy.send_event(UserEvent::UpdateStaged);
+                    update_staged = true;
+                }
+                Ok(false) => {} // up to date or SHA256 mismatch abort — silent (D-03 / SC-2)
+                Err(e) => eprintln!("[brevly-print] Update check failed: {e:#}"),
+                // Note: {e:#} never contains agent_token — token only via .bearer_auth() (T-02-02)
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(6 * 60 * 60)).await;
     }
 }
 
@@ -516,6 +585,12 @@ fn main() -> anyhow::Result<()> {
             run_print_worker(print_rx, worker_token, worker_base_url, worker_db_path, worker_http).await;
         });
 
+        // Phase 7 clones: capture update-task values BEFORE retry_token/retry_base_url
+        // are potentially moved into the retry spawn closure below (D-03 / plan 02).
+        let update_token    = retry_token.clone();
+        let update_base_url = retry_base_url.clone();
+        let update_http     = http.clone();
+
         // Phase 6: spawn the retry POLL loop — fourth Tokio task (D-03).
         // Crash recovery already ran to completion above (CR-02), so the poll loop only
         // retries rows that recovery placed in retry_queue plus rows the worker enqueued.
@@ -534,6 +609,14 @@ fn main() -> anyhow::Result<()> {
         } else {
             eprintln!("[brevly-print] Main: printer not configured — retry task not spawned");
         }
+
+        // Phase 7: spawn update-check loop — fifth Tokio task (D-03).
+        // Cloned from retry_token/retry_base_url before the retry move above (agent_token
+        // already moved into the pusher spawn). Off the print critical path (SC-1).
+        let proxy_for_update = event_loop.create_proxy();
+        rt_handle.spawn(async move {
+            run_update_check_loop(update_http, update_base_url, update_token, proxy_for_update).await;
+        });
 
         // Drop original sender — only pusher_tx (moved into the task) keeps the
         // channel open. When the Pusher task exits, rx.recv() returns None (Phase 5).
