@@ -580,6 +580,12 @@ fn render_form(
             state.refresh_printers();
         }
     } else {
+        // WR-04: collect only display names before the closure to avoid cloning the
+        // entire printer_list (which contains two String fields each) every frame.
+        let printer_names: Vec<String> = state.printer_list
+            .iter()
+            .map(|p| p.display_name.clone())
+            .collect();
         egui::ComboBox::from_label("")
             .selected_text(
                 state
@@ -589,11 +595,11 @@ fn render_form(
             )
             .width(ui.available_width())
             .show_ui(ui, |ui| {
-                for printer in state.printer_list.clone() {
+                for name in &printer_names {
                     ui.selectable_value(
                         &mut state.selected_printer,
-                        Some(printer.display_name.clone()),
-                        printer.display_name,
+                        Some(name.clone()),
+                        name.as_str(),
                     );
                 }
             });
