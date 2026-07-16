@@ -363,6 +363,46 @@ pub async fn fetch_pending_jobs(
     }
 }
 
+// ── Auto-update version check ─────────────────────────────────────────────────
+
+/// Response from `GET /api/agent/version`.
+///
+/// Noren returns camelCase JSON; `rename_all` maps to Rust snake_case (Pitfall 7 pattern).
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionResponse {
+    pub version: String,
+    pub download_url: String,
+    pub sha256: String,
+}
+
+/// Fetch the current release version info from `GET {base_url}/api/agent/version`.
+///
+/// `agent_token` is passed ONLY via `.bearer_auth()` — never logged (T-02-02).
+/// On failure: returns `Err`; caller logs and silently retries on next poll (D-03).
+pub async fn check_version(
+    client: &reqwest::Client,
+    base_url: &str,
+    agent_token: &str,
+) -> anyhow::Result<VersionResponse> {
+    let url = format!("{base_url}/api/agent/version");
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(agent_token) // T-02-02: token passed here, never in eprintln!
+        .send()
+        .await
+        .context("check_version: HTTP transport error")?;
+
+    match resp.status().as_u16() {
+        200 => resp
+            .json::<VersionResponse>()
+            .await
+            .context("check_version: response parse error"),
+        status => anyhow::bail!("check_version: unexpected status {status}"),
+    }
+}
+
 /// Acknowledge a print job on the Noren backend (idempotent).
 ///
 /// `POST /api/agent/jobs/{job_id}/ack` — no request body.
