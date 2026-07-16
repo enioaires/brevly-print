@@ -44,7 +44,11 @@ pub enum PrinterId {
 /// Abstraction over platform-specific raw-byte printing.
 ///
 /// Mirrors `CredentialStore` (same trait shape, cfg-gated impls).
-pub trait Printer {
+///
+/// `Send` bound is required because `printer_from_entry()` returns `Box<dyn Printer>`
+/// that is held across `.await` points inside the `run_print_worker` async task
+/// spawned via `rt_handle.spawn()` (which requires `F: Future + Send`).
+pub trait Printer: Send {
     /// Send raw ESC/POS bytes to the printer.
     ///
     /// On Windows spooler path: CRITICAL — pDatatype must be "RAW" (Pitfall C1).

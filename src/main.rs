@@ -23,6 +23,7 @@ use brevly_print::{
     config_store,
     credential_store::{credential_store, CredentialError, CredentialStore as _},
     health_state::HealthState,
+    print_worker::run_print_worker,
     pusher::{run_pusher_loop, PrintEvent, PusherConfig},
     noren_client::noren_base_url,
 };
@@ -84,11 +85,6 @@ struct App {
     /// is_reactivation flag for ActivationWindow constructor.
     is_reactivation: bool,
 
-    // === Phase 4 additions ===
-    /// Receiver for Phase 5 print worker handoff. Held here so the channel is not dropped
-    /// (a dropped receiver would make every `tx.send` in the Pusher task fail). Phase 5
-    /// will take this out of `Option` and own the receiver.
-    _print_rx: Option<tokio::sync::mpsc::Receiver<PrintEvent>>,
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -394,8 +390,7 @@ fn main() -> anyhow::Result<()> {
     let is_runtime = matches!(mode, AppMode::Runtime);
 
     // mpsc channel for Phase 4 → Phase 5 PrintEvent handoff (D-03).
-    // The receiver is held in App._print_rx so the channel is not dropped;
-    // Phase 5 will take it out of Option and consume it.
+    // print_rx is consumed by the print worker task spawned inside `if is_runtime`.
     let (print_tx, print_rx) = tokio::sync::mpsc::channel::<PrintEvent>(32);
 
     if is_runtime {
@@ -419,6 +414,12 @@ fn main() -> anyhow::Result<()> {
             .context("Failed to read noren_base_url from ConfigStore")?
             .unwrap_or_else(noren_base_url);
 
+        // Clone values for print worker BEFORE auth_url and agent_token are moved
+        // into the pusher spawn closure (D-01 / D-02).
+        let worker_base_url = auth_url.clone();
+        let worker_db_path = db_path.clone();
+        let worker_http = http.clone();
+
         let pusher_config = PusherConfig { key: pusher_key, cluster: pusher_cluster, tenant_id, auth_url };
 
         // Get agentToken from CredentialStore (D-02). On the Runtime path, cred_result is Ok.
@@ -429,6 +430,9 @@ fn main() -> anyhow::Result<()> {
                 "Runtime path requires Ok credential, but got: {e}"
             ),
         };
+
+        // Clone agent_token for the print worker BEFORE it is moved into the pusher spawn.
+        let worker_token = agent_token.clone();
 
         // Health closure — Pusher task drives the tray via EventLoopProxy (C2).
         // Never touches tray-icon APIs directly (Pitfall 4).
@@ -443,6 +447,12 @@ fn main() -> anyhow::Result<()> {
         rt_handle.spawn(async move {
             run_pusher_loop(pusher_config, agent_token, pusher_tx, send_health, pusher_db_path, pusher_http).await;
         });
+
+        // Phase 5: spawn print worker — consumes print_rx (D-01).
+        rt_handle.spawn(async move {
+            run_print_worker(print_rx, worker_token, worker_base_url, worker_db_path, worker_http).await;
+        });
+
         // Drop original sender — only pusher_tx (moved into the task) keeps the
         // channel open. When the Pusher task exits, rx.recv() returns None (Phase 5).
         drop(print_tx);
@@ -459,7 +469,6 @@ fn main() -> anyhow::Result<()> {
         #[cfg(windows)]
         tray_runtime: None,
         activation_window: None,
-        _print_rx: Some(print_rx),
     };
     event_loop.run_app(&mut app).context("Event loop error")?;
 
