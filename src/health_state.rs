@@ -13,7 +13,7 @@ pub enum HealthState {
     Connected,
     /// Yellow: WebSocket handshake in progress or reconnect backoff. Phase 4+.
     Reconnecting,
-    /// Red: Printer absent or connection failed. D-03 / Phase 6.
+    /// Red: Printer failure (paper out, offline, USB disconnect). D-03 / Phase 6.
     Problem,
 }
 
@@ -23,7 +23,7 @@ impl HealthState {
         match self {
             Self::Connected    => "Brevly Print — Conectado",
             Self::Reconnecting => "Brevly Print — Reconectando…",
-            Self::Problem      => "Brevly Print — Problema de conexão",
+            Self::Problem      => "Brevly Print — Falha na impressora",
         }
     }
 
@@ -32,7 +32,7 @@ impl HealthState {
         match self {
             Self::Connected    => "Conectado",
             Self::Reconnecting => "Reconectando…",
-            Self::Problem      => "Problema de conexão",
+            Self::Problem      => "Falha na impressora",
         }
     }
 }
