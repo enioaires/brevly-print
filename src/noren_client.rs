@@ -322,7 +322,7 @@ pub async fn ack_job(
         .context("ack_job: HTTP transport error")?;
 
     match resp.status().as_u16() {
-        200 | 409 => Ok(()), // 409 = already acked — idempotent by design (C4 / D-04)
+        200 | 204 | 409 => Ok(()), // 204 = No Content (REST convention for ack); 409 = already acked — idempotent by design (C4 / D-04)
         status => anyhow::bail!("ack_job: unexpected status {status}"),
     }
 }
