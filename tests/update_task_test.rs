@@ -104,7 +104,7 @@ fn pure_verify_sha256_match_returns_ok() {
 
 #[tokio::test]
 async fn check_version_200_parses_camel_case() {
-    let body = r#"{"version":"0.2.0","downloadUrl":"http://example.com/pkg.nupkg","sha256":"deadbeef"}"#;
+    let body = r#"{"latest":"0.2.0","downloadUrl":"http://example.com/pkg.nupkg","sha256":"deadbeef"}"#;
     let base_url = spawn_stub(200, body).await;
 
     let client = reqwest::Client::new();
@@ -149,7 +149,7 @@ async fn sc2_mismatch_aborts_without_staging() {
     let wrong_sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
     let version_body = Box::leak(
         format!(
-            r#"{{"version":"0.99.9","downloadUrl":"{artifact_url}","sha256":"{wrong_sha256}"}}"#
+            r#"{{"latest":"0.99.9","downloadUrl":"{artifact_url}","sha256":"{wrong_sha256}"}}"#
         )
         .into_boxed_str(),
     );

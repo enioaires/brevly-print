@@ -258,8 +258,9 @@ pub async fn pusher_auth(
 
 /// Fetch the ESC/POS bytes for a print job from the Noren backend.
 ///
-/// `GET /api/agent/jobs/{job_id}/bytes` returns `{ "bytes": "<base64>" }`.
-/// The base64 payload is decoded and returned as raw bytes ready for the printer.
+/// `GET /api/agent/jobs/{job_id}/bytes` returns `{ jobId, type, bytesB64 }` (the ESC/POS
+/// snapshot is in `bytesB64`). The base64 payload is decoded and returned as raw bytes
+/// ready for the printer.
 ///
 /// `agent_token` is passed ONLY via `.bearer_auth()` — never in any log or
 /// error string (T-02-02 / T-05-01).
@@ -277,6 +278,8 @@ pub async fn fetch_job_bytes(
     // Local deserialize target — avoids polluting the module namespace.
     #[derive(Deserialize)]
     struct BytesResponse {
+        // Noren serves the base64 ESC/POS snapshot as `bytesB64` (the DB column name).
+        #[serde(rename = "bytesB64")]
         bytes: String,
     }
 
@@ -368,9 +371,11 @@ pub async fn fetch_pending_jobs(
 /// Response from `GET /api/agent/version`.
 ///
 /// Noren returns camelCase JSON; `rename_all` maps to Rust snake_case (Pitfall 7 pattern).
+/// Noren serves the version under the key `latest` (with a `minSupported` we ignore).
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionResponse {
+    #[serde(rename = "latest")]
     pub version: String,
     pub download_url: String,
     pub sha256: String,

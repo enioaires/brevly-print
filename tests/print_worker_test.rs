@@ -50,7 +50,7 @@ async fn test_fetch_job_bytes_200_decodes_base64() {
     let raw = b"\x1b\x40Hello\x1d\x56\x00";
     let encoded = base64::engine::general_purpose::STANDARD.encode(raw);
     // body must be &'static str for spawn_stub; Box::leak promotes it
-    let body_json = format!(r#"{{"bytes":"{}"}}"#, encoded);
+    let body_json = format!(r#"{{"jobId":"j1","type":"order","bytesB64":"{}"}}"#, encoded);
     let body: &'static str = Box::leak(body_json.into_boxed_str());
 
     let base_url = spawn_stub(200, body).await;
