@@ -38,6 +38,11 @@ struct ActivateRequest<'a> {
     serial: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     machine_id: Option<&'a str>,
+    /// CR-03: when true, tells Noren this is a confirmed migration (re-bind) from another machine.
+    /// The server must treat `force_rebind: true` as an authorised takeover of the serial.
+    /// Omitted on first-time activation (false) to keep the request compact and backward-compatible.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    force_rebind: bool,
 }
 
 /// Successful response from `POST /api/agent/activate`.
@@ -97,17 +102,23 @@ pub enum ActivateError {
 ///
 /// `activate()` never logs the response body — `agentToken` must not appear in logs
 /// (T-02-02). The caller is responsible for storing the token via DPAPI (ACT-06).
+/// # Arguments
+///
+/// * `force_rebind` — when `true`, signals to Noren that the user has confirmed migration of
+///   the serial from another machine. Set to `false` on first-time activation. CR-03: without
+///   this flag a 409 response causes the UI to loop forever on re-bind confirmation.
 pub async fn activate(
     client: &reqwest::Client,
     base_url: &str,
     serial: &str,
     machine_id: Option<&str>,
+    force_rebind: bool,
 ) -> Result<ActivateResponse, ActivateError> {
     let url = format!("{base_url}/api/agent/activate");
 
     let resp = client
         .post(&url)
-        .json(&ActivateRequest { serial, machine_id })
+        .json(&ActivateRequest { serial, machine_id, force_rebind })
         .send()
         .await
         .map_err(ActivateError::Transport)?;

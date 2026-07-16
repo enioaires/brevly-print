@@ -543,7 +543,8 @@ fn render_form(
                 .clicked()
             {
                 state.show_rebind_confirm = false;
-                dispatch_activate(state, rt, http);
+                // CR-03: force_rebind=true signals Noren this is a confirmed migration.
+                dispatch_activate(state, rt, http, true);
             }
         });
         ui.add_space(8.0);
@@ -688,7 +689,7 @@ fn render_form(
     if do_save {
         handle_save(state, app_dir, conn, should_exit);
     } else if do_activate && can_activate {
-        dispatch_activate(state, rt, http);
+        dispatch_activate(state, rt, http, false);
     }
 
     // ── Test-print status line (D-08, D-09) ──────────────────────────────────
@@ -775,6 +776,7 @@ fn dispatch_activate(
     state: &mut ActivationFormState,
     rt: &tokio::runtime::Handle,
     http: &reqwest::Client,
+    force_rebind: bool,
 ) {
     if state.serial_input.trim().is_empty() {
         state.serial_error = Some("Informe o serial antes de ativar.".into());
@@ -799,11 +801,14 @@ fn dispatch_activate(
     let http = http.clone();
 
     rt.spawn(async move {
+        // CR-03: pass force_rebind so the server can distinguish a confirmed migration
+        // from the original activation request that produced the 409 conflict.
         let result = noren_client::activate(
             &http,
             &base_url,
             &serial,
             machine_id.as_deref(),
+            force_rebind,
         )
         .await;
         let _ = tx.send(result);

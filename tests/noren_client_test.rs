@@ -57,7 +57,7 @@ async fn test_activate_200_returns_response() {
     let base_url = spawn_stub(200, body).await;
 
     let client = reqwest::Client::new();
-    let result = activate(&client, &base_url, "SERIAL-001", None).await;
+    let result = activate(&client, &base_url, "SERIAL-001", None, false).await;
 
     let resp = result.expect("200 should return Ok");
     assert_eq!(resp.agent_token, "tok-abc123");
@@ -74,7 +74,7 @@ async fn test_activate_404_returns_invalid_serial() {
     let base_url = spawn_stub(404, r#"{"error":"not found"}"#).await;
 
     let client = reqwest::Client::new();
-    let result = activate(&client, &base_url, "SERIAL-BAD", None).await;
+    let result = activate(&client, &base_url, "SERIAL-BAD", None, false).await;
 
     assert!(
         matches!(result, Err(ActivateError::InvalidSerial)),
@@ -89,7 +89,7 @@ async fn test_activate_403_returns_invalid_serial() {
     let base_url = spawn_stub(403, r#"{"error":"forbidden"}"#).await;
 
     let client = reqwest::Client::new();
-    let result = activate(&client, &base_url, "SERIAL-BAD", None).await;
+    let result = activate(&client, &base_url, "SERIAL-BAD", None, false).await;
 
     assert!(
         matches!(result, Err(ActivateError::InvalidSerial)),
@@ -104,7 +104,7 @@ async fn test_activate_409_returns_already_active_other() {
     let base_url = spawn_stub(409, r#"{"error":"conflict"}"#).await;
 
     let client = reqwest::Client::new();
-    let result = activate(&client, &base_url, "SERIAL-TAKEN", None).await;
+    let result = activate(&client, &base_url, "SERIAL-TAKEN", None, false).await;
 
     assert!(
         matches!(result, Err(ActivateError::AlreadyActiveOther)),
@@ -126,7 +126,7 @@ async fn test_activate_connection_refused_returns_transport() {
 
     let base_url = format!("http://127.0.0.1:{port}");
     let client = reqwest::Client::new();
-    let result = activate(&client, &base_url, "SERIAL-001", None).await;
+    let result = activate(&client, &base_url, "SERIAL-001", None, false).await;
 
     assert!(
         matches!(result, Err(ActivateError::Transport(_))),
