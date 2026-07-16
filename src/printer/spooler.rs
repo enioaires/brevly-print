@@ -73,6 +73,9 @@ unsafe fn write_raw_to_spooler(printer_name: &str, data: &[u8]) -> Result<(), Pr
 
 /// Inner function that performs the print job while the caller holds the open handle.
 /// Separated so that the `ClosePrinter` call in `write_raw_to_spooler` is unconditional.
+///
+/// WR-01: tracks whether StartDocPrinterW and StartPagePrinter have been called so the
+/// matching End* functions are invoked on every error path, preventing zombie spooler jobs.
 unsafe fn submit_job(
     handle: PRINTER_HANDLE,
     printer_name: &str,
@@ -91,6 +94,24 @@ unsafe fn submit_job(
         pDatatype: windows::core::PWSTR(datatype.as_ptr() as *mut u16),
     };
 
+    // WR-01: state flags so every error path calls the correct End* counterpart.
+    let mut doc_started = false;
+    let mut page_started = false;
+
+    /// Best-effort cleanup helper — called on all error paths.
+    /// Calls EndPagePrinter only if the page was started, then EndDocPrinter only if
+    /// the doc was started, matching the WR-01 RAII requirement.
+    macro_rules! cleanup_on_err {
+        () => {{
+            if page_started {
+                let _ = EndPagePrinter(handle);
+            }
+            if doc_started {
+                let _ = EndDocPrinter(handle);
+            }
+        }};
+    }
+
     // StartDocPrinterW: level 1, pointer to DOC_INFO_1W cast to *const u8 per windows-0.62 API.
     let job_id =
         StartDocPrinterW(handle, 1, &doc_info as *const DOC_INFO_1W as *const u8).map_err(
@@ -101,20 +122,29 @@ unsafe fn submit_job(
             "StartDocPrinterW returned job_id=0 for {printer_name}"
         )));
     }
+    doc_started = true;
 
     // StartPagePrinterW must be called before WritePrinter.
-    StartPagePrinter(handle).map_err(|e| {
-        PrinterError::PrintFailed(format!("StartPagePrinterW failed for {printer_name}: {e}"))
-    })?;
+    if let Err(e) = StartPagePrinter(handle) {
+        cleanup_on_err!();
+        return Err(PrinterError::PrintFailed(format!(
+            "StartPagePrinterW failed for {printer_name}: {e}"
+        )));
+    }
+    page_started = true;
 
     let mut bytes_written: u32 = 0;
     // CR-04: guard against silent truncation — usize is 8 bytes on 64-bit; u32 is 4.
-    let data_len_u32 = u32::try_from(data.len()).map_err(|_| {
-        PrinterError::PrintFailed(format!(
-            "Print data too large for WritePrinter ({} bytes > u32::MAX)",
-            data.len()
-        ))
-    })?;
+    let data_len_u32 = match u32::try_from(data.len()) {
+        Ok(n) => n,
+        Err(_) => {
+            cleanup_on_err!();
+            return Err(PrinterError::PrintFailed(format!(
+                "Print data too large for WritePrinter ({} bytes > u32::MAX)",
+                data.len()
+            )));
+        }
+    };
     // WritePrinter: data pointer + length in bytes.
     let write_ok: BOOL = WritePrinter(
         handle,
@@ -123,9 +153,7 @@ unsafe fn submit_job(
         &mut bytes_written,
     );
     if write_ok.0 == 0 {
-        // EndPage + EndDoc best-effort before returning error.
-        let _ = EndPagePrinter(handle);
-        let _ = EndDocPrinter(handle);
+        cleanup_on_err!();
         return Err(PrinterError::PrintFailed(format!(
             "WritePrinter failed for {printer_name}: only {bytes_written}/{} bytes written",
             data.len()
