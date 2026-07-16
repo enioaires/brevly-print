@@ -111,7 +111,7 @@
   3. When the internet connection is restored after an outage, the agent pulls all unacked jobs from `/api/agent/jobs/pending` and prints them in chronological order — no ticket is lost during an internet outage
   4. On boot after a crash, any jobs left in `status = 'printing'` in SQLite are reprocessed; SQLite dedup prevents double-printing
 **Plans**: 4 plans (4 waves)
-- [ ] 06-01-PLAN.md — Wave-0 test scaffolds: retry_task_test + pending_jobs_test RED stubs, config_store_test user_version 1→2 (RES-01/02/03/04)
+- [x] 06-01-PLAN.md — Wave-0 test scaffolds: retry_task_test + pending_jobs_test RED stubs, config_store_test user_version 1→2 (RES-01/02/03/04)
 - [ ] 06-02-PLAN.md — Migration v2 ('printing' status) + print_worker status='printing' fence + retry_queue INSERT on failure (RES-01/04)
 - [ ] 06-03-PLAN.md — retry_task.rs (crash recovery + 5s poll + 3×/30s retry + toast/red-tray exhaustion) + health strings + main.rs spawn (RES-01/02/04)
 - [ ] 06-04-PLAN.md — fetch_pending_jobs() + pusher/client.rs pending-pull on reconnect with CR-02 validation + dedup (RES-03)
@@ -139,7 +139,7 @@
 | 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
 | 4. Pusher Event Stream | 2/2 | Complete   | 2026-07-16 |
 | 5. Job Pipeline | 2/2 | Complete   | 2026-07-16 |
-| 6. Resilience | 0/4 | Planned | - |
+| 6. Resilience | 1/4 | In Progress|  |
 | 7. Auto-Update + Distribution Polish | 0/0 | Not started | - |
 
 ---
