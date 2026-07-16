@@ -43,10 +43,12 @@ pub async fn run_print_worker(
             return;
         }
     };
-    // Enable WAL mode so concurrent writes from the main App connection are safe
-    // (T-05-09 / Pitfall 5).
-    if let Err(e) = conn.pragma_update(None, "journal_mode", "WAL") {
-        eprintln!("[brevly-print] Print worker: failed to set WAL mode: {e:#}");
+    // Enable WAL mode + busy_timeout so concurrent writes from the other three
+    // connections are safe and don't return SQLITE_BUSY immediately (CR-01 / T-05-09 /
+    // Pitfall 5). Without the busy_timeout, this worker's 'printing' fence or its
+    // retry_queue INSERT could be silently dropped — a lost comanda.
+    if let Err(e) = config_store::apply_wal_pragmas(&conn) {
+        eprintln!("[brevly-print] Print worker: failed to set WAL pragmas: {e:#}");
         return;
     }
 

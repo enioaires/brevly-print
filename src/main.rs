@@ -329,13 +329,19 @@ fn main() -> anyhow::Result<()> {
     let db_path = app_dir.join("state.db");
     let conn = config_store::open_and_migrate(&db_path)
         .context("Failed to open or migrate state.db")?;
-    println!("[brevly-print] state.db migrated (user_version=1)");
+    // IN-02: read and print the actual user_version rather than a hardcoded number,
+    // which would otherwise stay "1" even after the v2 migration advances it.
+    let migrated_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(-1);
+    println!("[brevly-print] state.db migrated (user_version={migrated_version})");
 
-    // Enable WAL mode on the main App connection (Pitfall 5 — the Pusher task
-    // opens a second connection in WAL mode; both connections must agree on
-    // journal_mode for concurrent writes to be safe).
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .context("Failed to set WAL mode on main SQLite connection")?;
+    // Enable WAL mode + busy_timeout on the main App connection (CR-01 / Pitfall 5).
+    // All four connections (main App, Pusher, print worker, retry task) share the same
+    // PRAGMA setup via apply_wal_pragmas so a write-write race waits for the lock
+    // instead of returning SQLITE_BUSY immediately and silently dropping a transition.
+    config_store::apply_wal_pragmas(&conn)
+        .context("Failed to set WAL pragmas on main SQLite connection")?;
 
     // ── Credential check (ACT-07) ────────────────────────────────────────────
     // NotFound|Corrupt → activation window (first run or re-activation)

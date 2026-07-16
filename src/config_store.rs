@@ -24,12 +24,22 @@ use rusqlite::{Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use std::path::Path;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 // ── Schema v1 migration ──────────────────────────────────────────────────────
 //
 // All three D-14 tables in a single `M::up` so `user_version` advances to exactly 1.
 // Bundled SQLite (via rusqlite "bundled" feature) handles multi-statement execute_batch
 // correctly; this is the safe path for the bundled build.
+//
+// WR-06 — two distinct attempt counters, tracking different things (do not conflate):
+//   * `printed_jobs.attempt`      — incremented by the PRINT WORKER's 'printing' fence
+//                                    once per fetch+print pass it drives for a job_id.
+//   * `retry_queue.attempt_count` — incremented by the RETRY TASK, bounding the number
+//                                    of background retries (up to 3) for a failed print.
+// The retry task's `< 3` threshold is intentionally offset: the print worker seeds
+// `attempt_count = 1` (its own original print already failed once). Neither counter
+// bounds the other; keep them separate.
 
 static MIGRATIONS: LazyLock<Migrations<'static>> = LazyLock::new(|| {
     Migrations::new(vec![
@@ -65,8 +75,10 @@ static MIGRATIONS: LazyLock<Migrations<'static>> = LazyLock::new(|| {
         //
         // SQLite does not support ALTER TABLE ... MODIFY COLUMN or in-place CHECK changes,
         // so the standard table-recreation pattern is used: create v2 with the expanded
-        // CHECK, copy all rows positionally (column order matches v1 exactly), drop old
-        // table, rename v2, re-create the status index.
+        // CHECK, copy all rows with an EXPLICIT column list (IN-03: never rely on
+        // positional SELECT * / column-order coupling — a future reorder of the v1 column
+        // list would otherwise silently corrupt data), drop old table, rename v2,
+        // re-create the status index.
         //
         // FK note: retry_queue.job_id REFERENCES printed_jobs(job_id). rusqlite_migration
         // disables FK enforcement during migrations by default (PRAGMA foreign_keys=OFF),
@@ -82,7 +94,10 @@ static MIGRATIONS: LazyLock<Migrations<'static>> = LazyLock::new(|| {
                 printed_at  TEXT,
                 failed_at   TEXT
             );
-            INSERT INTO printed_jobs_v2 SELECT * FROM printed_jobs;
+            INSERT INTO printed_jobs_v2
+                (job_id, job_type, status, attempt, received_at, printed_at, failed_at)
+                SELECT job_id, job_type, status, attempt, received_at, printed_at, failed_at
+                FROM printed_jobs;
             DROP TABLE printed_jobs;
             ALTER TABLE printed_jobs_v2 RENAME TO printed_jobs;
             CREATE INDEX idx_printed_jobs_status ON printed_jobs(status);",
@@ -105,6 +120,29 @@ pub fn open_and_migrate(path: &Path) -> rusqlite::Result<Connection> {
         .to_latest(&mut conn)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     Ok(conn)
+}
+
+/// Apply the shared WAL PRAGMA setup to a freshly-opened connection (CR-01 / WR-07).
+///
+/// Every background task (main App, Pusher, print worker, retry task) opens its own
+/// `rusqlite::Connection` because `Connection` is not `Send`. Under WAL, reads never
+/// block writers, but writers are still serialized — only one writer holds the write
+/// lock at a time. Without a `busy_timeout`, the loser of a write-write race gets
+/// `SQLITE_BUSY` returned *immediately* (default timeout is 0), silently dropping a
+/// state transition (a lost comanda — violating "nenhuma comanda perdida").
+///
+/// This helper centralises the PRAGMA setup so all four call sites share identical
+/// configuration and cannot drift:
+///   1. `journal_mode = WAL` — concurrent readers/writers across connections.
+///   2. `busy_timeout = 5s`  — wait for the write lock instead of failing instantly.
+///
+/// # Errors
+///
+/// Returns a `rusqlite::Error` if either PRAGMA cannot be applied.
+pub fn apply_wal_pragmas(conn: &Connection) -> rusqlite::Result<()> {
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.busy_timeout(Duration::from_secs(5))?;
+    Ok(())
 }
 
 /// Set (upsert) a key/value pair in the `config` table.

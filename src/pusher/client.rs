@@ -154,9 +154,12 @@ pub async fn run_pusher_loop(
             return;
         }
     };
-    // Enable WAL mode so concurrent writers from the main App connection are safe.
-    if let Err(e) = pusher_conn.pragma_update(None, "journal_mode", "WAL") {
-        eprintln!("[brevly-print] Pusher task: failed to set WAL mode: {e:#}");
+    // Enable WAL mode + busy_timeout so concurrent writers are safe (CR-01 / WR-07 /
+    // Pitfall 5). Without the busy_timeout, insert_print_job on the pending-pull path
+    // could lose the write lock and silently drop the job — defeating the RES-03
+    // offline-recovery pull (the headline Phase 6 feature).
+    if let Err(e) = crate::config_store::apply_wal_pragmas(&pusher_conn) {
+        eprintln!("[brevly-print] Pusher task: failed to set WAL pragmas: {e:#}");
         return;
     }
 
