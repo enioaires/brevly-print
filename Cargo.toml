@@ -42,10 +42,6 @@ tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 rand         = "0.8"
 
-# Pusher HMAC auth (Phase 4)
-hmac = "0.13"
-sha2 = "0.11"
-
 # Error handling
 thiserror = "2"
 anyhow    = "1"

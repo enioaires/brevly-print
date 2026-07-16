@@ -174,6 +174,9 @@ pub async fn activate(
 ///
 /// `agent_token` is passed via `.bearer_auth()` and is never formatted into any log
 /// or error message (T-04-01 / T-02-02).
+// Auth is delegated to the Noren backend: we POST (channel_name, socket_id) and
+// receive a pre-signed "app_key:hmac_sha256" string. No local HMAC is computed;
+// the backend holds the Pusher app_secret.
 pub async fn pusher_auth(
     client: &reqwest::Client,
     base_url: &str,
