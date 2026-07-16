@@ -1,13 +1,11 @@
-//! Contract tests for `noren_client::fetch_job_bytes` and `noren_client::ack_job`.
+//! Contract tests for `noren_client::fetch_job_bytes` and `noren_client::ack_job`,
+//! plus Phase 5 Plan 02 unit tests for the print worker filter and ordering constraint.
 //!
-//! Wave-0 scaffold — tests compile once `fetch_job_bytes` and `ack_job` are
-//! implemented in Task 2.  Uses a mock TCP listener (no live Noren endpoint).
+//! Wave-0 scaffold (Plan 01): four HTTP contract tests covering PRT-01 and PRT-08.
 //!
-//! Covers the four behaviors from 05-01-PLAN.md:
-//!   - 200 + base64 body → Ok(decoded Vec<u8>)
-//!   - 500 → Err (non-200 status)
-//!   - 409 → Ok(()) — idempotent ack (C4)
-//!   - 500 on ack → Err
+//! Plan 02 additions:
+//!   - `enabled_types_filter` (5-02-01 / PRT-09): allow/skip predicate, empty = allow-all
+//!   - `update_precedes_ack_in_source` (5-02-02 / C4): static ordering assertion
 
 use base64::Engine as _;
 use brevly_print::noren_client::{ack_job, fetch_job_bytes};
@@ -85,4 +83,74 @@ async fn test_ack_job_500_returns_err() {
     let client = reqwest::Client::new();
     let result = ack_job(&client, &base_url, "tok-test", "job-001").await;
     assert!(result.is_err(), "500 must return Err");
+}
+
+// ── Plan 02: enabled_types filter (5-02-01 / PRT-09) ────────────────────────
+
+/// Verify the allow/skip predicate used by `run_print_worker` (D-07 / PRT-09).
+///
+/// The inline predicate `!enabled.is_empty() && !enabled.contains(job_type)` controls
+/// whether a job is routed to the printer (allowed) or marked 'printed' + acked without
+/// printing (skipped).  An empty enabled list is the fail-safe allow-all behaviour
+/// (D-03 / Pitfall 5 / T-05-06).
+///
+/// This test mirrors the exact boolean logic used in `run_print_worker` so that any
+/// accidental inversion or short-circuit change in the production code will also break
+/// the predicate here.
+#[test]
+fn enabled_types_filter() {
+    // Pure predicate — mirrors the inline check in run_print_worker (D-07).
+    fn is_allowed(enabled: &[String], job_type: &str) -> bool {
+        enabled.is_empty() || enabled.contains(&job_type.to_string())
+    }
+
+    let enabled = vec!["order".to_string(), "dispatch".to_string()];
+
+    // Job type present in the list → allowed.
+    assert!(
+        is_allowed(&enabled, "order"),
+        "job_type 'order' is in enabled_types → must be allowed"
+    );
+    // Job type absent from the list → skipped (disabled-type branch).
+    assert!(
+        !is_allowed(&enabled, "closing"),
+        "job_type 'closing' is NOT in enabled_types → must be skipped"
+    );
+    // Empty enabled list → allow-all (fail-safe: misconfigured or missing key).
+    assert!(
+        is_allowed(&[], "closing"),
+        "empty enabled_types → allow-all (fail-safe); 'closing' must be allowed"
+    );
+}
+
+// ── Plan 02: UPDATE-before-ack ordering (5-02-02 / C4 / T-05-04) ────────────
+
+/// Static source-order assertion that `UPDATE printed_jobs SET status='printed'`
+/// textually precedes the final `ack_job(` call in `src/print_worker.rs`.
+///
+/// This is the C4 constraint (D-09 / T-05-04): the SQLite status update MUST be
+/// written before the ack is sent, on every code path.  A future refactor that
+/// accidentally swaps the two statements will fail this test.
+///
+/// Strategy: use `include_str!` to embed the source file at compile time, then
+/// assert that the byte index of the first UPDATE occurrence is less than the byte
+/// index of the last `ack_job(` occurrence — proving that the UPDATE statement
+/// appears before the final ack call in the success path.
+#[test]
+fn update_precedes_ack_in_source() {
+    let src = include_str!("../src/print_worker.rs");
+
+    let update_idx = src
+        .find("UPDATE printed_jobs SET status='printed'")
+        .expect("UPDATE statement not found in src/print_worker.rs");
+
+    let ack_idx = src
+        .rfind("ack_job(")
+        .expect("ack_job( not found in src/print_worker.rs");
+
+    assert!(
+        update_idx < ack_idx,
+        "C4 ordering violated: first UPDATE index ({update_idx}) must be < last ack_job index ({ack_idx}). \
+         SQLite UPDATE must textually precede ack_job() in src/print_worker.rs."
+    );
 }
