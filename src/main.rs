@@ -10,6 +10,12 @@
 //!   7. `tokio::runtime::Builder::new_multi_thread()` runtime built BEFORE the event loop (Pitfall 3)
 //!   8. `EventLoop::<UserEvent>::with_user_event()` + `run_app()` — drives the egui window or tray
 
+// Release builds run as a Windows GUI-subsystem app so no console window is shown —
+// the agent runs invisibly in the tray (CLAUDE.md: "roda invisível na bandeja").
+// Debug builds keep the console attached so println!/eprintln! diagnostics are visible
+// during development.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use anyhow::Context as _;
 use winit::{
     application::ApplicationHandler,
