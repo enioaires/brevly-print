@@ -78,7 +78,7 @@ jobs:
       - name: Install vpk CLI
         run: dotnet tool install -g vpk --version "1.*"
 
-      - name: Package with vpk (produces Setup.exe)
+      - name: Package with vpk (produces Setup.exe + update package)
         shell: pwsh
         run: |
           $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
@@ -89,7 +89,12 @@ jobs:
             --mainExe brevly-print.exe `
             --outputDir Releases `
             --packTitle "Brevly Print" `
-            --packAuthors "Brevly"
+            --packAuthors "Brevly" `
+            --channel win `
+            --delta BestSpeed
+          # ^ --channel win produces releases.win.json (required by HttpSource in agent plan 02)
+          # ^ --delta BestSpeed produces a delta .nupkg when a previous release exists in --outputDir
+          # ^ First release: no previous .nupkg in Releases/ -> no delta generated (Pitfall 7, expected not a failure)
 
       # Sign only when OV cert secret is present.
       # Skips cleanly on PRs and before cert procurement (D-12/D-13).
