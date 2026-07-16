@@ -182,9 +182,26 @@ pub async fn run_pusher_loop(
         // Step 3: expect pusher:connection_established, extract socket_id
         let socket_id = match ws.next().await {
             Some(Ok(Message::Text(text))) => {
-                match parse_envelope(text.as_str())
-                    .and_then(|env| extract_socket_id(&env))
-                {
+                let env = match parse_envelope(text.as_str()) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        eprintln!("[brevly-print] Pusher: failed to parse first frame: {e:#}");
+                        tokio::time::sleep(backoff_delay(attempt)).await;
+                        attempt += 1;
+                        continue;
+                    }
+                };
+                if env.event != "pusher:connection_established" {
+                    eprintln!(
+                        "[brevly-print] Pusher: expected connection_established, got '{}' \
+                         (data: {})",
+                        env.event, env.data
+                    );
+                    tokio::time::sleep(backoff_delay(attempt)).await;
+                    attempt += 1;
+                    continue;
+                }
+                match extract_socket_id(&env) {
                     Ok(id) => id,
                     Err(e) => {
                         eprintln!("[brevly-print] Pusher: failed to extract socket_id: {e:#}");
