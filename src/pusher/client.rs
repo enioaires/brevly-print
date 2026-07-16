@@ -77,10 +77,15 @@ fn insert_print_job(
 ///
 /// Returns `false` if the env var is absent or malformed (no panic).
 #[cfg(debug_assertions)]
-fn try_fake_pusher_event(tx: &mpsc::Sender<PrintEvent>) -> bool {
-    let raw = match std::env::var("BREVLY_FAKE_PUSHER_EVENT") {
-        Ok(v) => v,
-        Err(_) => return false,
+fn try_fake_pusher_event(tx: &mpsc::Sender<PrintEvent>, override_val: Option<&str>) -> bool {
+    // `override_val` is `Some(value)` in tests (avoids unsafe env mutation);
+    // at the real call site, pass `None` to read from the environment variable.
+    let raw = match override_val
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("BREVLY_FAKE_PUSHER_EVENT").ok())
+    {
+        Some(v) => v,
+        None => return false,
     };
 
     let (job_id, job_type) = match raw.split_once(':') {
@@ -133,7 +138,7 @@ pub async fn run_pusher_loop(
 ) {
     // D-04 dev shim: if the fake-event env var is set, skip the real WS connection.
     #[cfg(debug_assertions)]
-    if try_fake_pusher_event(&tx) {
+    if try_fake_pusher_event(&tx, None) {
         send_health(HealthState::Connected);
         std::future::pending::<()>().await;
         // unreachable but required for type inference
@@ -455,38 +460,28 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn fake_event_returns_false_when_env_not_set() {
-        // Ensure the env var is not set
-        // SAFETY: single-threaded test process; no concurrent env access.
-        unsafe { std::env::remove_var("BREVLY_FAKE_PUSHER_EVENT") };
+        // Pass None explicitly — no env var read, no unsafe mutation needed.
         let (tx, _rx) = mpsc::channel::<PrintEvent>(8);
         assert!(
-            !try_fake_pusher_event(&tx),
-            "should return false when env var is absent"
+            !try_fake_pusher_event(&tx, None),
+            "should return false when no override and env var is absent"
         );
     }
 
     #[cfg(debug_assertions)]
     #[test]
     fn fake_event_returns_false_on_malformed_value() {
-        // A value without a colon is malformed — should return false, not panic
-        // SAFETY: single-threaded test process; no concurrent env access.
-        unsafe { std::env::set_var("BREVLY_FAKE_PUSHER_EVENT", "no-colon-here") };
+        // A value without a colon is malformed — should return false, not panic.
         let (tx, _rx) = mpsc::channel::<PrintEvent>(8);
-        let result = try_fake_pusher_event(&tx);
-        // SAFETY: single-threaded test process; no concurrent env access.
-        unsafe { std::env::remove_var("BREVLY_FAKE_PUSHER_EVENT") };
+        let result = try_fake_pusher_event(&tx, Some("no-colon-here"));
         assert!(!result, "malformed value should return false");
     }
 
     #[cfg(debug_assertions)]
     #[tokio::test]
     async fn fake_event_parses_job_id_and_type() {
-        // SAFETY: single-threaded test process; no concurrent env access.
-        unsafe { std::env::set_var("BREVLY_FAKE_PUSHER_EVENT", "abc123:order") };
         let (tx, mut rx) = mpsc::channel::<PrintEvent>(8);
-        let activated = try_fake_pusher_event(&tx);
-        // SAFETY: single-threaded test process; no concurrent env access.
-        unsafe { std::env::remove_var("BREVLY_FAKE_PUSHER_EVENT") };
+        let activated = try_fake_pusher_event(&tx, Some("abc123:order"));
 
         assert!(activated, "should return true for valid env var");
 
