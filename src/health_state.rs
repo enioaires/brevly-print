@@ -45,9 +45,9 @@ impl HealthState {
     /// Each file is exactly 16 × 16 × 4 = 1024 bytes of raw RGBA.
     pub fn icon(&self) -> tray_icon::Icon {
         let (bytes, w, h): (&[u8], u32, u32) = match self {
-            Self::Connected    => (include_bytes!("../assets/tray_green.rgba"),  16, 16),
-            Self::Reconnecting => (include_bytes!("../assets/tray_yellow.rgba"), 16, 16),
-            Self::Problem      => (include_bytes!("../assets/tray_red.rgba"),    16, 16),
+            Self::Connected    => (include_bytes!("assets/tray_green.rgba"),  16, 16),
+            Self::Reconnecting => (include_bytes!("assets/tray_yellow.rgba"), 16, 16),
+            Self::Problem      => (include_bytes!("assets/tray_red.rgba"),    16, 16),
         };
         tray_icon::Icon::from_rgba(bytes.to_vec(), w, h)
             .expect("embedded tray RGBA bytes are always valid")

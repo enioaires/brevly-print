@@ -9,7 +9,6 @@
 //! will interpret ESC/POS bytes as GDI/EMF and produce silent garbage output.
 #![cfg(windows)]
 
-use windows::Win32::Foundation::BOOL;
 use windows::Win32::Graphics::Printing::{
     ClosePrinter, DOC_INFO_1W, EndDocPrinter, EndPagePrinter, OpenPrinterW, PRINTER_HANDLE,
     StartDocPrinterW, StartPagePrinter, WritePrinter,
@@ -59,14 +58,15 @@ unsafe fn write_raw_to_spooler(printer_name: &str, data: &[u8]) -> Result<(), Pr
 
     let mut handle = PRINTER_HANDLE::default();
     // OpenPrinterW failure with ERROR_INVALID_PRINTER_NAME (1801) → NotFound.
-    OpenPrinterW(PCWSTR(name_w.as_ptr()), &mut handle, None)
+    // SAFETY: name_w is a valid null-terminated UTF-16 buffer that outlives this call.
+    unsafe { OpenPrinterW(PCWSTR(name_w.as_ptr()), &mut handle, None) }
         .map_err(|e| PrinterError::NotFound(format!("{printer_name}: {e}")))?;
 
     // From here on, every exit path must call ClosePrinter (T-02-06).
-    let result = submit_job(handle, printer_name, data);
+    let result = unsafe { submit_job(handle, printer_name, data) };
 
     // Always close the handle — ClosePrinter on a valid handle is infallible in practice.
-    let _ = ClosePrinter(handle);
+    unsafe { let _ = ClosePrinter(handle); }
 
     result
 }
@@ -114,23 +114,20 @@ unsafe fn submit_job(
         }};
     }
 
-    // StartDocPrinterW: level 1, pointer to DOC_INFO_1W cast to *const u8 per windows-0.62 API.
-    let job_id =
-        StartDocPrinterW(handle, 1, &doc_info as *const DOC_INFO_1W as *const u8).map_err(
-            |e| PrinterError::PrintFailed(format!("StartDocPrinterW failed for {printer_name}: {e}")),
-        )?;
+    // StartDocPrinterW: level 1, pointer to DOC_INFO_1W — returns u32 job_id (0 = failure) in windows 0.62.
+    let job_id = StartDocPrinterW(handle, 1, &doc_info as *const DOC_INFO_1W);
     if job_id == 0 {
         return Err(PrinterError::PrintFailed(format!(
-            "StartDocPrinterW returned job_id=0 for {printer_name}"
+            "StartDocPrinterW failed for {printer_name}"
         )));
     }
     doc_started = true;
 
-    // StartPagePrinterW must be called before WritePrinter.
-    if let Err(e) = StartPagePrinter(handle) {
+    // StartPagePrinterW must be called before WritePrinter — returns BOOL in windows 0.62.
+    if !StartPagePrinter(handle).as_bool() {
         cleanup_on_err!();
         return Err(PrinterError::PrintFailed(format!(
-            "StartPagePrinterW failed for {printer_name}: {e}"
+            "StartPagePrinterW failed for {printer_name}"
         )));
     }
     page_started = true;
@@ -147,14 +144,14 @@ unsafe fn submit_job(
             )));
         }
     };
-    // WritePrinter: data pointer + length in bytes.
-    let write_ok: BOOL = WritePrinter(
+    // WritePrinter: data pointer + length in bytes. Returns BOOL (inferred — no import needed in 0.62).
+    let write_ok = WritePrinter(
         handle,
         data.as_ptr() as *const _,
         data_len_u32,
         &mut bytes_written,
     );
-    if write_ok.0 == 0 {
+    if !write_ok.as_bool() {
         cleanup_on_err!();
         return Err(PrinterError::PrintFailed(format!(
             "WritePrinter failed for {printer_name}: only {bytes_written}/{} bytes written",
@@ -162,12 +159,17 @@ unsafe fn submit_job(
         )));
     }
 
-    EndPagePrinter(handle).map_err(|e| {
-        PrinterError::PrintFailed(format!("EndPagePrinterW failed for {printer_name}: {e}"))
-    })?;
-    EndDocPrinter(handle).map_err(|e| {
-        PrinterError::PrintFailed(format!("EndDocPrinterW failed for {printer_name}: {e}"))
-    })?;
+    // EndPagePrinter / EndDocPrinter return BOOL in windows 0.62 (not Result).
+    if !EndPagePrinter(handle).as_bool() {
+        return Err(PrinterError::PrintFailed(format!(
+            "EndPagePrinterW failed for {printer_name}"
+        )));
+    }
+    if !EndDocPrinter(handle).as_bool() {
+        return Err(PrinterError::PrintFailed(format!(
+            "EndDocPrinterW failed for {printer_name}"
+        )));
+    }
 
     Ok(())
 }
