@@ -51,10 +51,12 @@ anyhow    = "1"
 # ── Windows-only dependencies (Linux never links these) ──────────────────────
 [target.'cfg(windows)'.dependencies]
 
-# Windows printing spooler (Phase 5)
+# Windows printing spooler (Phase 5) + tray runtime (Phase 3)
 windows = { version = "0.62", features = [
     "Win32_Graphics_Printing",
     "Win32_Foundation",
+    "Win32_System_Threading",       # CreateMutexW, GetLastError (D-08)
+    "Win32_UI_WindowsAndMessaging", # MessageBoxW, MB_YESNO, IDYES (D-06)
 ] }
 
 # DPAPI credential store (Phase 1 — real impl, Windows only)
