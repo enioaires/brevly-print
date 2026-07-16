@@ -100,6 +100,7 @@ Progress: [█░░░░░░] 1/7 phases complete
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 20260716-fix-noren-base-url | Fix NOREN_BASE_URL_DEFAULT (app.noren.com.br → noren.app.br) | 2026-07-16 | a407704 | [20260716-fix-noren-base-url](./quick/20260716-fix-noren-base-url/) |
 
 ## Session Continuity
 
