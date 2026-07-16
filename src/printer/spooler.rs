@@ -7,10 +7,14 @@
 //!
 //! CRITICAL PITFALL C1: `pDatatype` in `DOC_INFO_1W` MUST be set to `"RAW"` or the spooler
 //! will interpret ESC/POS bytes as GDI/EMF and produce silent garbage output.
-//!
-//! **Plan 02 implements** the full Windows spooler body.
-//! This file is a compile-verified stub — `todo!()` is intentional and annotated.
 #![cfg(windows)]
+
+use windows::Win32::Foundation::BOOL;
+use windows::Win32::Graphics::Printing::{
+    ClosePrinter, DOC_INFO_1W, EndDocPrinter, EndPagePrinter, OpenPrinterW, PRINTER_HANDLE,
+    StartDocPrinterW, StartPagePrinter, WritePrinter,
+};
+use windows::core::PCWSTR;
 
 use super::{Printer, PrinterError};
 
@@ -19,8 +23,8 @@ use super::{Printer, PrinterError};
 /// Created by `printer_from_entry()` for `PrinterId::Spooler(name)`.
 pub struct WindowsSpoolerPrinter {
     /// Windows printer name as returned by `printers::get_printers()` → `p.name`.
-    /// Must be passed verbatim to `OpenPrinterW` (Pitfall 5).
-    printer_name: String,
+    /// Must be passed verbatim to `OpenPrinterW` — do NOT transform the name (Pitfall 5).
+    pub printer_name: String,
 }
 
 impl WindowsSpoolerPrinter {
@@ -30,9 +34,103 @@ impl WindowsSpoolerPrinter {
 }
 
 impl Printer for WindowsSpoolerPrinter {
-    fn print_raw(&self, _bytes: &[u8]) -> Result<(), PrinterError> {
-        // Plan 02 implements: OpenPrinterW → StartDocPrinterW("RAW") → WritePrinter → EndDocPrinter
-        // CRITICAL (C1): pDatatype MUST be "RAW" — see RESEARCH.md Pattern 3 and Pitfall 1.
-        todo!("Plan 02 implements WindowsSpoolerPrinter::print_raw (printer name: {})", self.printer_name)
+    fn print_raw(&self, bytes: &[u8]) -> Result<(), PrinterError> {
+        // SAFETY: Win32 FFI — pointer and length values are correctly derived from owned
+        // Vec<u16> and slice references that outlive the unsafe block. No attacker-controlled
+        // lengths (T-02-07 accepted, local single-user agent).
+        unsafe { write_raw_to_spooler(&self.printer_name, bytes) }
     }
+}
+
+/// Win32 WritePrinter RAW sequence — RESEARCH.md Pattern 3.
+///
+/// Sequence: OpenPrinterW → StartDocPrinterW (DOC_INFO_1W level 1 with "RAW") →
+/// StartPagePrinter → WritePrinter → EndPagePrinter → EndDocPrinter → ClosePrinter.
+///
+/// T-02-06 (handle leak on error path): every early-return after OpenPrinterW
+/// calls `ClosePrinter(handle)` to ensure the handle is always released.
+unsafe fn write_raw_to_spooler(printer_name: &str, data: &[u8]) -> Result<(), PrinterError> {
+    // Encode printer name to UTF-16 null-terminated string.
+    // Pitfall 5: pass printer_name verbatim — no transformation.
+    let name_w: Vec<u16> = printer_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut handle = PRINTER_HANDLE::default();
+    // OpenPrinterW failure with ERROR_INVALID_PRINTER_NAME (1801) → NotFound.
+    OpenPrinterW(PCWSTR(name_w.as_ptr()), &mut handle, None)
+        .map_err(|e| PrinterError::NotFound(format!("{printer_name}: {e}")))?;
+
+    // From here on, every exit path must call ClosePrinter (T-02-06).
+    let result = submit_job(handle, printer_name, data);
+
+    // Always close the handle — ClosePrinter on a valid handle is infallible in practice.
+    let _ = ClosePrinter(handle);
+
+    result
+}
+
+/// Inner function that performs the print job while the caller holds the open handle.
+/// Separated so that the `ClosePrinter` call in `write_raw_to_spooler` is unconditional.
+unsafe fn submit_job(
+    handle: PRINTER_HANDLE,
+    printer_name: &str,
+    data: &[u8],
+) -> Result<(), PrinterError> {
+    let doc_name: Vec<u16> = "BrevlyPrint\0".encode_utf16().collect();
+    // CRITICAL C1: pDatatype MUST be "RAW" or ESC/POS becomes silent garbage (GDI/EMF).
+    // This is the load-bearing detail — omitting "RAW" causes the spooler to interpret
+    // ESC/POS bytes as EMF/GDI and produce no visible output. Validated by test-print (D-08).
+    let datatype: Vec<u16> = "RAW\0".encode_utf16().collect(); // CRITICAL C1: RAW
+
+    let doc_info = DOC_INFO_1W {
+        pDocName: windows::core::PWSTR(doc_name.as_ptr() as *mut u16),
+        pOutputFile: windows::core::PWSTR::null(),
+        // CRITICAL C1: pDatatype = "RAW" — see above.
+        pDatatype: windows::core::PWSTR(datatype.as_ptr() as *mut u16),
+    };
+
+    // StartDocPrinterW: level 1, pointer to DOC_INFO_1W cast to *const u8 per windows-0.62 API.
+    let job_id =
+        StartDocPrinterW(handle, 1, &doc_info as *const DOC_INFO_1W as *const u8).map_err(
+            |e| PrinterError::PrintFailed(format!("StartDocPrinterW failed for {printer_name}: {e}")),
+        )?;
+    if job_id == 0 {
+        return Err(PrinterError::PrintFailed(format!(
+            "StartDocPrinterW returned job_id=0 for {printer_name}"
+        )));
+    }
+
+    // StartPagePrinterW must be called before WritePrinter.
+    StartPagePrinter(handle).map_err(|e| {
+        PrinterError::PrintFailed(format!("StartPagePrinterW failed for {printer_name}: {e}"))
+    })?;
+
+    let mut bytes_written: u32 = 0;
+    // WritePrinter: data pointer + length in bytes.
+    let write_ok: BOOL = WritePrinter(
+        handle,
+        data.as_ptr() as *const _,
+        data.len() as u32,
+        &mut bytes_written,
+    );
+    if write_ok.0 == 0 {
+        // EndPage + EndDoc best-effort before returning error.
+        let _ = EndPagePrinter(handle);
+        let _ = EndDocPrinter(handle);
+        return Err(PrinterError::PrintFailed(format!(
+            "WritePrinter failed for {printer_name}: only {bytes_written}/{} bytes written",
+            data.len()
+        )));
+    }
+
+    EndPagePrinter(handle).map_err(|e| {
+        PrinterError::PrintFailed(format!("EndPagePrinterW failed for {printer_name}: {e}"))
+    })?;
+    EndDocPrinter(handle).map_err(|e| {
+        PrinterError::PrintFailed(format!("EndDocPrinterW failed for {printer_name}: {e}"))
+    })?;
+
+    Ok(())
 }
