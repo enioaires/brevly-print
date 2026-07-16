@@ -293,6 +293,9 @@ pub async fn run_pusher_loop(
 
         // Step 7: inner event loop — ping/pong zombie detection + event dispatch
         let mut ping_timer = interval(Duration::from_secs(30));
+        // Use Delay so a sleep/wake burst doesn't fire multiple ticks and trigger
+        // a spurious zombie-reconnect (WR-04 — MissedTickBehavior::Burst is default).
+        ping_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // First tick fires immediately; burn it so the first real tick is at 30s
         ping_timer.tick().await;
         let mut awaiting_pong = false;
