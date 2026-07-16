@@ -9,6 +9,7 @@
 //! Base URL is resolved by `noren_base_url()` which reads the `NOREN_BASE_URL` compile-time
 //! environment variable and falls back to `NOREN_BASE_URL_DEFAULT` (Open Question 2).
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -138,5 +139,74 @@ pub async fn activate(
                 resp.error_for_status().unwrap_err(),
             ))
         }
+    }
+}
+
+// ── Pusher channel authentication ────────────────────────────────────────────
+
+/// POST channel auth to `{base_url}/api/agent/pusher/auth` and return the
+/// Pusher `auth` string (e.g. `"key123:hmac-abc"`).
+///
+/// # Arguments
+///
+/// * `client`      — shared `reqwest::Client` (created once by the caller).
+/// * `base_url`    — Noren base URL (from `noren_base_url()`).
+/// * `agent_token` — Bearer token from `CredentialStore` (never logged — T-04-01).
+/// * `channel`     — Pusher private channel name, e.g. `"private-tenant-t1-print"`.
+/// * `socket_id`   — socket ID from the current WebSocket session; must be fresh
+///                   on every reconnect — never reuse a cached auth string (EVT-02).
+///
+/// # POST body
+///
+/// Sends `application/x-www-form-urlencoded` with fields `channel_name` and `socket_id`.
+/// CRITICAL: the field name is `channel_name` (not `channel`) — verified from Noren
+/// source `/api/agent/pusher/auth/+server.ts` (Pitfall 2).
+///
+/// # Status mapping
+///
+/// | HTTP status | Returns |
+/// |-------------|---------|
+/// | 200         | `Ok(auth_string)` where `auth_string = body.auth` |
+/// | 403         | `Err(...)` — invalid token or channel mismatch |
+/// | other / transport | `Err(...)` |
+///
+/// # Security
+///
+/// `agent_token` is passed via `.bearer_auth()` and is never formatted into any log
+/// or error message (T-04-01 / T-02-02).
+pub async fn pusher_auth(
+    client: &reqwest::Client,
+    base_url: &str,
+    agent_token: &str,
+    channel: &str,
+    socket_id: &str,
+) -> anyhow::Result<String> {
+    // Local deserialize target — avoids polluting the module namespace.
+    #[derive(Deserialize)]
+    struct PusherAuthResponse {
+        auth: String,
+    }
+
+    let url = format!("{base_url}/api/agent/pusher/auth");
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(agent_token)
+        // CRITICAL: Noren reads body.get('channel_name') — NOT 'channel' (Pitfall 2)
+        .form(&[("channel_name", channel), ("socket_id", socket_id)])
+        .send()
+        .await
+        .context("pusher_auth: HTTP transport error")?;
+
+    match resp.status().as_u16() {
+        200 => {
+            let body: PusherAuthResponse = resp
+                .json()
+                .await
+                .context("pusher_auth: response parse error")?;
+            Ok(body.auth)
+        }
+        403 => anyhow::bail!("pusher_auth: 403 — invalid token or channel mismatch"),
+        status => anyhow::bail!("pusher_auth: unexpected status {status}"),
     }
 }
