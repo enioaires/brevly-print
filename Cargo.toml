@@ -42,6 +42,9 @@ tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 rand         = "0.8"
 
+# Base64 encoding/decoding (Phase 5 — already a transitive dep 0.22.1; making it explicit)
+base64 = "0.22"
+
 # Error handling
 thiserror = "2"
 anyhow    = "1"
