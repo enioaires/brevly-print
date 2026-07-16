@@ -71,3 +71,42 @@ jobs:
 
       - name: Run tests (full suite — includes real DPAPI round-trip)
         run: cargo test --target x86_64-pc-windows-msvc
+
+      - name: Install vpk CLI
+        run: dotnet tool install -g vpk --version "1.*"
+
+      - name: Package with vpk (produces Setup.exe)
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          vpk pack `
+            --packId BrevlyPrint `
+            --packVersion $version `
+            --packDir target\release `
+            --mainExe brevly-print.exe `
+            --outputDir Releases `
+            --packTitle "Brevly Print" `
+            --packAuthors "Brevly"
+
+      # Sign only when OV cert secret is present.
+      # Skips cleanly on PRs and before cert procurement (D-12/D-13).
+      - name: Sign Setup.exe (Authenticode — OV cert, gated on secret)
+        if: ${{ secrets.CODESIGN_PFX_BASE64 != '' }}
+        shell: pwsh
+        env:
+          CODESIGN_PFX_BASE64:  ${{ secrets.CODESIGN_PFX_BASE64 }}
+          CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+        run: |
+          $pfxBytes = [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64)
+          $pfxPath  = "$env:RUNNER_TEMP\cert.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+          $setupExe = Get-ChildItem -Path Releases -Filter "*Setup.exe" | Select-Object -First 1
+          & signtool sign /fd SHA256 /f "$pfxPath" /p "$env:CODESIGN_PFX_PASSWORD" `
+            /tr http://timestamp.digicert.com /td SHA256 "$($setupExe.FullName)"
+          Remove-Item $pfxPath
+
+      - name: Upload Setup.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brevly-print-setup
+          path: Releases/*Setup.exe
