@@ -354,6 +354,7 @@ pub async fn run_pusher_loop(
                                                             break 'inner true;
                                                         }
                                                     }
+                                                }
                                                 Ok(false) => {
                                                     // Duplicate (Pusher re-delivery) — skip mpsc send (C3)
                                                     eprintln!(
