@@ -257,7 +257,10 @@ pub async fn run_pusher_loop(
                             break true;
                         }
                         Ok(env) if env.event == "pusher:error" => {
-                            eprintln!("[brevly-print] Pusher: error before subscription_succeeded");
+                            eprintln!(
+                                "[brevly-print] Pusher: error before subscription_succeeded — reconnecting. Details: {}",
+                                env.data
+                            );
                             break false;
                         }
                         Ok(_) => {
@@ -341,7 +344,10 @@ pub async fn run_pusher_loop(
                                     }
                                 }
                                 "pusher:error" => {
-                                    eprintln!("[brevly-print] Pusher: received pusher:error — reconnecting");
+                                    eprintln!(
+                                        "[brevly-print] Pusher: received pusher:error — reconnecting. Details: {}",
+                                        env.data
+                                    );
                                     break 'inner true;
                                 }
                                 _ => {
