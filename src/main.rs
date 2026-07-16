@@ -435,6 +435,9 @@ fn main() -> anyhow::Result<()> {
         rt_handle.spawn(async move {
             run_pusher_loop(pusher_config, agent_token, pusher_tx, send_health, pusher_db_path, pusher_http).await;
         });
+        // Drop original sender — only pusher_tx (moved into the task) keeps the
+        // channel open. When the Pusher task exits, rx.recv() returns None (Phase 5).
+        drop(print_tx);
     }
 
     let mut app = App {
