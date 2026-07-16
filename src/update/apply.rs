@@ -59,10 +59,9 @@ use velopack::{sources::HttpSource, UpdateManager};
 ///
 /// - **OQ-1 (staging persistence):** UNVERIFIED on Linux — confirm on Windows
 ///   (see UAT-07-01). If the `.nupkg` is lost after 60s, switch to Design B.
-/// - **OQ-2 (`UpdateInfo` field name):** `update.to_apply` is ASSUMED based on
-///   RESEARCH.md §Pattern 1 and docs.rs/velopack/1.2.0. Confirm against
-///   `UpdateInfo` struct in the 1.2.0 docs — if the field name differs, update this
-///   call site accordingly.
+/// - **OQ-2 (`UpdateInfo` field name): RESOLVED** — the field is `TargetFullRelease`
+///   (a `VelopackAsset`) on velopack 1.2.0, confirmed by the Windows build. `to_apply`
+///   (the earlier assumption) does not exist.
 pub fn stage_update(feed_base_url: &str) -> anyhow::Result<()> {
     let um = UpdateManager::new(HttpSource::new(feed_base_url), None, None)
         .map_err(|e| anyhow::anyhow!("UpdateManager::new failed (not a Velopack install?): {e}"))?;
@@ -86,10 +85,11 @@ pub fn stage_update(feed_base_url: &str) -> anyhow::Result<()> {
     // OQ-1: staging-persistence past the 60s updater timeout is UNVERIFIED on Linux
     // — confirm on Windows (see 07-02 UAT UAT-07-01).
     //
-    // OQ-2: `update.to_apply` is the assumed UpdateInfo field (RESEARCH.md A2 / Pattern 1).
-    // Confirm against docs.rs/velopack/1.2.0/velopack/struct.UpdateInfo.html before
-    // the first Windows release build — if the field name differs, this won't compile.
-    um.wait_exit_then_apply_updates(&update.to_apply, true, false, std::iter::empty::<&str>())
+    // OQ-2 RESOLVED (Windows build 2026-07-16): the UpdateInfo field is `TargetFullRelease`
+    // (a VelopackAsset), confirmed by the velopack 1.2.0 compiler error listing available
+    // fields as TargetFullRelease / BaseRelease / DeltasToTarget / IsDowngrade. This is the
+    // full release asset to apply on next boot.
+    um.wait_exit_then_apply_updates(&update.TargetFullRelease, true, false, std::iter::empty::<&str>())
         .map_err(|e| anyhow::anyhow!("wait_exit_then_apply_updates: {e}"))?;
 
     Ok(())
