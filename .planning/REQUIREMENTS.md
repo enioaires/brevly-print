@@ -55,7 +55,7 @@ Requisitos do release inicial. Cada um mapeia para uma fase do roadmap.
 
 - [ ] **DIST-01**: O instalador é assinado (Authenticode) desde o primeiro release
 - [x] **DIST-02**: Auto-update — o agente baixa e instala a nova versão automaticamente no próximo reinício, sem ação do dono
-- [ ] **DIST-03**: Verificação de integridade (SHA256) do binário antes de aplicar qualquer update
+- [x] **DIST-03**: Verificação de integridade (SHA256) do binário antes de aplicar qualquer update
 
 ## v2 Requirements
 
@@ -138,7 +138,7 @@ Preenchido durante a criação do roadmap.
 | RES-04 | Phase 6 | Pending |
 | DIST-01 | Phase 3 | Pending |
 | DIST-02 | Phase 7 | Complete |
-| DIST-03 | Phase 7 | Pending |
+| DIST-03 | Phase 7 | Complete |
 
 **Coverage:**
 - v1 requirements: 25 total
