@@ -327,9 +327,33 @@ pub async fn run_pusher_loop(
                                         Ok(event) => {
                                             match insert_print_job(&pusher_conn, &event.job_id, &event.job_type) {
                                                 Ok(true) => {
-                                                    // New event — send to Phase 5 worker
-                                                    let _ = tx.send(event).await;
-                                                }
+                                                    // New event — send to Phase 5 worker.
+                                                    // WR-04: use try_send to avoid blocking inside
+                                                    // the select! arm; a blocking .await here would
+                                                    // starve the ping_timer arm and disable zombie
+                                                    // detection for the duration of any channel backlog.
+                                                    match tx.try_send(event) {
+                                                        Ok(()) => {}
+                                                        Err(tokio::sync::mpsc::error::TrySendError::Full(ev)) => {
+                                                            // Channel full — fall back to a spawned task so
+                                                            // the ping timer is not blocked while we wait.
+                                                            eprintln!(
+                                                                "[brevly-print] Pusher: print channel full — \
+                                                                 job {} queued via background send",
+                                                                ev.job_id
+                                                            );
+                                                            let tx2 = tx.clone();
+                                                            tokio::spawn(async move {
+                                                                let _ = tx2.send(ev).await;
+                                                            });
+                                                        }
+                                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                                            eprintln!(
+                                                                "[brevly-print] Pusher: print channel closed — exiting"
+                                                            );
+                                                            break 'inner true;
+                                                        }
+                                                    }
                                                 Ok(false) => {
                                                     // Duplicate (Pusher re-delivery) — skip mpsc send (C3)
                                                     eprintln!(
