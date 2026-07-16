@@ -10,7 +10,7 @@
 ## Phases
 
 - [x] **Phase 1: Foundation + Thread Model Spike** - Prove the `winit 0.30` + raw `egui` (egui-winit + egui-wgpu) event-loop integration; initialize SQLite schema (rusqlite_migration v1) and DPAPI credential infra
-- [ ] **Phase 2: Activation** - One-time activation window with serial validation, printer selection, DPAPI credential storage, and autostart registration
+- [x] **Phase 2: Activation** - One-time activation window with serial validation, printer selection, DPAPI credential storage, and autostart registration (completed 2026-07-16)
 - [ ] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer
 - [ ] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic
 - [ ] **Phase 5: Job Pipeline** - End-to-end print path: event → fetch bytes → WritePrinter/serial → SQLite dedup → ack
@@ -51,8 +51,8 @@
   6. After a Windows reinstall (DPAPI key loss), the agent detects the unreadable credential and re-enters the activation flow automatically
 **Plans**: 3 plans (2 waves)
 - [x] 02-01-PLAN.md — Contracts + Linux-provable seams: noren_client (serial validation), Printer trait + Linux stub, machine_id, winreg dep, Wave-0 tests (ACT-03/04/05)
-- [ ] 02-02-PLAN.md — Windows hardware impls: WritePrinter RAW spooler (C1), serialport write, combined printer enumeration (ACT-04/05)
-- [ ] 02-03-PLAN.md — Activation window slice: startup credential branch, egui UI-SPEC form + async validation, test-print, save→DPAPI+SQLite+HKCU autostart→exit (ACT-01 PARTIAL, ACT-02/06/07/08)
+- [x] 02-02-PLAN.md — Windows hardware impls: WritePrinter RAW spooler (C1), serialport write, combined printer enumeration (ACT-04/05)
+- [x] 02-03-PLAN.md — Activation window slice: startup credential branch, egui UI-SPEC form + async validation, test-print, save→DPAPI+SQLite+HKCU autostart→exit (ACT-01 PARTIAL, ACT-02/06/07/08)
 **UI hint**: yes
 
 ### Phase 3: Tray + Runtime + First Distributable
@@ -127,7 +127,7 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Thread Model Spike | 3/3 | Complete | 2026-07-15 |
-| 2. Activation | 1/3 | In Progress|  |
+| 2. Activation | 3/3 | Complete   | 2026-07-16 |
 | 3. Tray + Runtime + First Distributable | 0/0 | Not started | - |
 | 4. Pusher Event Stream | 0/0 | Not started | - |
 | 5. Job Pipeline | 0/0 | Not started | - |
