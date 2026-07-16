@@ -110,7 +110,11 @@
   2. After 3 failed retries, a Windows toast notification appears with a plain-language message (e.g., "Impressora sem papel — recarregue a bobina") and the tray icon turns red
   3. When the internet connection is restored after an outage, the agent pulls all unacked jobs from `/api/agent/jobs/pending` and prints them in chronological order — no ticket is lost during an internet outage
   4. On boot after a crash, any jobs left in `status = 'printing'` in SQLite are reprocessed; SQLite dedup prevents double-printing
-**Plans**: TBD
+**Plans**: 4 plans (4 waves)
+- [ ] 06-01-PLAN.md — Wave-0 test scaffolds: retry_task_test + pending_jobs_test RED stubs, config_store_test user_version 1→2 (RES-01/02/03/04)
+- [ ] 06-02-PLAN.md — Migration v2 ('printing' status) + print_worker status='printing' fence + retry_queue INSERT on failure (RES-01/04)
+- [ ] 06-03-PLAN.md — retry_task.rs (crash recovery + 5s poll + 3×/30s retry + toast/red-tray exhaustion) + health strings + main.rs spawn (RES-01/02/04)
+- [ ] 06-04-PLAN.md — fetch_pending_jobs() + pusher/client.rs pending-pull on reconnect with CR-02 validation + dedup (RES-03)
 
 ### Phase 7: Auto-Update + Distribution Polish
 **Goal**: The agent silently downloads and applies updates on the next reboot without any action from the restaurant owner, with integrity verified before applying
@@ -135,7 +139,7 @@
 | 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
 | 4. Pusher Event Stream | 2/2 | Complete   | 2026-07-16 |
 | 5. Job Pipeline | 2/2 | Complete   | 2026-07-16 |
-| 6. Resilience | 0/0 | Not started | - |
+| 6. Resilience | 0/4 | Planned | - |
 | 7. Auto-Update + Distribution Polish | 0/0 | Not started | - |
 
 ---
@@ -180,4 +184,4 @@
 ---
 
 *Roadmap created: 2026-07-15*
-*Last updated: 2026-07-16 after Phase 5 planning (2 plans, 2 waves)*
+*Last updated: 2026-07-16 after Phase 6 planning (4 plans, 4 waves)*
