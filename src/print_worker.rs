@@ -5,7 +5,7 @@
 //! executes the full fetch → print → UPDATE → ack pipeline.
 //!
 //! Ordering constraint (C4): the SQLite `UPDATE status='printed'` MUST precede
-//! every `ack_job()` call, on every code path (disabled-type branch AND success branch).
+//! every `ack_job` call, on every code path (disabled-type branch AND success branch).
 
 use std::path::PathBuf;
 
