@@ -126,31 +126,47 @@ fn enabled_types_filter() {
 // ── Plan 02: UPDATE-before-ack ordering (5-02-02 / C4 / T-05-04) ────────────
 
 /// Static source-order assertion that `UPDATE printed_jobs SET status='printed'`
-/// textually precedes the final `ack_job(` call in `src/print_worker.rs`.
+/// textually precedes `ack_job(` on BOTH code paths in `src/print_worker.rs`.
 ///
 /// This is the C4 constraint (D-09 / T-05-04): the SQLite status update MUST be
 /// written before the ack is sent, on every code path.  A future refactor that
 /// accidentally swaps the two statements will fail this test.
 ///
 /// Strategy: use `include_str!` to embed the source file at compile time, then
-/// assert that the byte index of the first UPDATE occurrence is less than the byte
-/// index of the last `ack_job(` occurrence — proving that the UPDATE statement
-/// appears before the final ack call in the success path.
+/// check both the success path (using rfind for the last/deepest pair) and the
+/// disabled-type path (using find for the first/earliest pair).
+///
+/// CR-03 fix: the original test used find() for UPDATE and rfind() for ack_job,
+/// which cross-compared the disabled-type UPDATE with the success-path ack — a
+/// comparison that is trivially true and does NOT protect the success path ordering.
+/// Now both paths are checked independently.
 #[test]
 fn update_precedes_ack_in_source() {
     let src = include_str!("../src/print_worker.rs");
 
-    let update_idx = src
-        .find("UPDATE printed_jobs SET status='printed'")
-        .expect("UPDATE statement not found in src/print_worker.rs");
-
-    let ack_idx = src
+    // Success path: rfind finds the LAST occurrence of each (success-path pair).
+    let success_update = src
+        .rfind("UPDATE printed_jobs SET status='printed'")
+        .expect("success-path UPDATE not found in src/print_worker.rs");
+    let success_ack = src
         .rfind("ack_job(")
-        .expect("ack_job( not found in src/print_worker.rs");
-
+        .expect("success-path ack_job( not found in src/print_worker.rs");
     assert!(
-        update_idx < ack_idx,
-        "C4 ordering violated: first UPDATE index ({update_idx}) must be < last ack_job index ({ack_idx}). \
-         SQLite UPDATE must textually precede ack_job() in src/print_worker.rs."
+        success_update < success_ack,
+        "C4 violated (success path): UPDATE ({success_update}) must precede ack_job ({success_ack}) \
+         in src/print_worker.rs"
+    );
+
+    // Disabled-type path: find the FIRST occurrence of each (disabled-type pair).
+    let dt_update = src
+        .find("UPDATE printed_jobs SET status='printed'")
+        .expect("disabled-type UPDATE not found in src/print_worker.rs");
+    let dt_ack = src
+        .find("ack_job(")
+        .expect("disabled-type ack_job( not found in src/print_worker.rs");
+    assert!(
+        dt_update < dt_ack,
+        "C4 violated (disabled-type path): UPDATE ({dt_update}) must precede ack_job ({dt_ack}) \
+         in src/print_worker.rs"
     );
 }
