@@ -75,6 +75,9 @@ serialport = "4.9"
 # Autostart (Phase 2)
 auto-launch = "0.6"
 
+# Machine ID from Windows registry (Phase 2)
+winreg = "0.56"
+
 # Auto-update (Phase 7)
 velopack = "1"
 
