@@ -172,7 +172,10 @@ fn main() -> anyhow::Result<()> {
     // Ok(_)           → Phase 3 runtime (already activated)
     // Io(e)           → fatal I/O error, propagate
     let cred = credential_store(&app_dir);
-    let needs_activation = match cred.load() {
+    // CR-02: capture result once to avoid TOCTOU — is_reactivation must reflect
+    // the same call that determined needs_activation.
+    let cred_result = cred.load();
+    let needs_activation = match &cred_result {
         Ok(_token) => {
             // Already activated. Phase 3 will start the tray runtime here.
             // For Phase 2, we log and exit 0 (no tray yet).
@@ -188,7 +191,7 @@ fn main() -> anyhow::Result<()> {
             true
         }
         Err(e) => {
-            return Err(anyhow::anyhow!(e)).context("Credential I/O error on startup");
+            return Err(anyhow::anyhow!("{e}")).context("Credential I/O error on startup");
         }
     };
 
@@ -210,7 +213,7 @@ fn main() -> anyhow::Result<()> {
         window: None,
         rt: rt_handle,
         http,
-        is_reactivation: matches!(cred.load(), Err(CredentialError::Corrupt(_))),
+        is_reactivation: matches!(cred_result, Err(CredentialError::Corrupt(_))),
         app_dir: app_dir.clone(),
         conn,
     };
