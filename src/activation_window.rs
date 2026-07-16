@@ -1011,10 +1011,31 @@ fn register_autostart_warn_on_fail(state: &mut ActivationFormState) {
     {
         match std::env::current_exe() {
             Ok(exe) => {
+                // RUN-03: Velopack installs to current\; autostart must point at root stub.
+                // When Velopack is present, the exe lives at:
+                //   %LocalAppData%\{packId}\current\brevly-print.exe
+                // The stable stub is at:
+                //   %LocalAppData%\{packId}\brevly-print.exe
+                // Detect by checking if parent contains Update.exe (Velopack's updater).
+                let autostart_path = {
+                    let parent = exe.parent().unwrap_or(exe.as_path());
+                    if parent.join("Update.exe").exists() {
+                        // Running inside a Velopack `current\` directory.
+                        // Use the grandparent + exe filename as the stable stub path.
+                        parent
+                            .parent()
+                            .unwrap_or(parent)
+                            .join(exe.file_name().unwrap_or(exe.as_os_str()))
+                    } else {
+                        // Dev build or non-Velopack install: register current_exe directly.
+                        exe.clone()
+                    }
+                };
+
                 use auto_launch::{AutoLaunch, WindowsEnableMode};
                 let al = AutoLaunch::new(
                     "BrevlyPrint",
-                    &exe.to_string_lossy(),
+                    &autostart_path.to_string_lossy(),
                     WindowsEnableMode::CurrentUser, // Pitfall 4: CurrentUser, never Dynamic
                     &[] as &[&str],
                 );
