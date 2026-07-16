@@ -54,6 +54,9 @@ jobs:
       WGPU_BACKEND: dx12
       # SQLite file-lock safety in integration tests
       RUST_TEST_THREADS: 1
+      # Expose as env var so the signing step can check existence via env context
+      # (secrets context is not available in `if:` expressions)
+      CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -91,10 +94,9 @@ jobs:
       # Sign only when OV cert secret is present.
       # Skips cleanly on PRs and before cert procurement (D-12/D-13).
       - name: Sign Setup.exe (Authenticode — OV cert, gated on secret)
-        if: ${{ secrets.CODESIGN_PFX_BASE64 != '' }}
+        if: ${{ env.CODESIGN_PFX_BASE64 != '' }}
         shell: pwsh
         env:
-          CODESIGN_PFX_BASE64:  ${{ secrets.CODESIGN_PFX_BASE64 }}
           CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
         run: |
           $pfxBytes = [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64)
