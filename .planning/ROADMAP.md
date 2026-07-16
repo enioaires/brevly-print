@@ -68,7 +68,7 @@
 **Plans**: 3 plans (2 waves)
 - [x] 07-01-PLAN.md — Linux-provable core: verify_sha256 + check_for_update pure fns, check_version(), try_check_and_stage orchestration + Windows apply skeleton, SC-2 abort tests (DIST-02/03)
 - [ ] 07-02-PLAN.md — OQ-1 staging-persistence spike (blocking gate) + finalized Velopack apply.rs + UserEvent::UpdateStaged spawn wiring + tray status line + toast + Windows E2E (SC-1/SC-2/SC-3)
-- [ ] 07-03-PLAN.md — CI publish loop: extend vpk pack (--channel win --delta), surface {version, downloadUrl, sha256} for Noren, upload .nupkg + feed artifacts, signing stays gated (DIST-02)
+- [x] 07-03-PLAN.md — CI publish loop: extend vpk pack (--channel win --delta), surface {version, downloadUrl, sha256} for Noren, upload .nupkg + feed artifacts, signing stays gated (DIST-02)
 
 ### Phase 4: Pusher Event Stream
 **Goal**: The agent subscribes to its tenant's private Pusher channel, receives print-event notifications reliably, and recovers from network interruptions without missing events
@@ -143,7 +143,7 @@
 | 4. Pusher Event Stream | 2/2 | Complete   | 2026-07-16 |
 | 5. Job Pipeline | 2/2 | Complete   | 2026-07-16 |
 | 6. Resilience | 4/4 | Complete   | 2026-07-16 |
-| 7. Auto-Update + Distribution Polish | 1/3 | In Progress|  |
+| 7. Auto-Update + Distribution Polish | 2/3 | In Progress|  |
 
 ---
 
