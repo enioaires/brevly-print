@@ -34,6 +34,10 @@ impl Printer for SerialPrinter {
         // Write all ESC/POS bytes — serialport implements std::io::Write.
         port.write_all(bytes)
             .map_err(PrinterError::Io)?;
+        // CR-05: flush the OS serial buffer so all bytes (including the paper-cut command
+        // GS V 0) are pushed onto the wire before the port closes.
+        port.flush()
+            .map_err(PrinterError::Io)?;
 
         Ok(())
     }
