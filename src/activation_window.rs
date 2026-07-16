@@ -983,10 +983,13 @@ fn handle_save(
     // 3. Register HKCU autostart (ACT-08, D-13 — warn-not-block on failure)
     register_autostart_warn_on_fail(state);
 
-    // 4. Close window + exit 0 (D-15, Pitfall 8: all persistence is DONE above)
-    println!("[brevly-print] Activation saved — exiting.");
+    // 4. Signal event loop to exit cleanly (D-15, Pitfall 8: all persistence is DONE above).
+    // Set should_exit = true and return; main.rs window_event() checks should_exit() on the
+    // next RedrawRequested and calls event_loop.exit(), allowing all Drop destructors to run
+    // (including rusqlite::Connection::drop → sqlite3_close → WAL flush). CR-01: do NOT call
+    // std::process::exit() here — that would bypass Drop and risk SQLite WAL corruption.
+    println!("[brevly-print] Activation saved — signalling event loop exit.");
     *should_exit = true;
-    std::process::exit(0);
 }
 
 /// Register HKCU Run autostart (ACT-08, Pitfall 4: MUST use CurrentUser not Dynamic).
