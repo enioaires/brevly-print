@@ -73,6 +73,13 @@ pub enum ActivateError {
     #[error("Serial já ativo em outra máquina")]
     AlreadyActiveOther,
 
+    /// Unexpected 2xx status other than 200 (e.g. 201, 204).
+    ///
+    /// Some REST frameworks return 201 Created with a valid JSON body; using
+    /// `unwrap_err()` on the parsed Ok value would panic the agent (CR-01).
+    #[error("Resposta inesperada do servidor: HTTP {0}")]
+    UnexpectedStatus(u16),
+
     /// Network or HTTP transport failure (connection error, timeout, unexpected status).
     #[error("Erro de rede: {0}")]
     Transport(#[from] reqwest::Error),
@@ -133,12 +140,14 @@ pub async fn activate(
         }
         403 | 404 => Err(ActivateError::InvalidSerial),
         409 => Err(ActivateError::AlreadyActiveOther),
-        // 2xx other than 200 (e.g. 201, 204): error_for_status() returns Ok for these,
-        // so unwrap_err() would panic. Parse as ActivateResponse to produce a reqwest::Error
-        // (the JSON parse will fail, giving us a typed error without calling unwrap_err).
-        201..=299 => Err(ActivateError::Transport(
-            resp.json::<ActivateResponse>().await.unwrap_err(),
-        )),
+        // 2xx other than 200 (e.g. 201, 204): drain the body to allow connection reuse,
+        // then return UnexpectedStatus (CR-01: calling unwrap_err() on a successful
+        // JSON parse would panic the agent if the server returns 201 with a valid body).
+        201..=299 => {
+            let status = resp.status().as_u16();
+            let _ = resp.bytes().await; // drain body — allow connection reuse
+            Err(ActivateError::UnexpectedStatus(status))
+        }
         _ => {
             // Non-2xx, non-handled status: error_for_status() is guaranteed to return Err here.
             Err(ActivateError::Transport(
