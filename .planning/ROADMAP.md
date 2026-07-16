@@ -14,7 +14,7 @@
 - [x] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer (completed 2026-07-16)
 - [x] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic (completed 2026-07-16)
 - [x] **Phase 5: Job Pipeline** - End-to-end print path: event → fetch bytes → WritePrinter/serial → SQLite dedup → ack (completed 2026-07-16)
-- [ ] **Phase 6: Resilience** - Printer-failure retry, Windows toast notifications, offline job pull, and boot-crash recovery
+- [x] **Phase 6: Resilience** - Printer-failure retry, Windows toast notifications, offline job pull, and boot-crash recovery (completed 2026-07-16)
 - [ ] **Phase 7: Auto-Update + Distribution Polish** - SHA256-verified silent auto-update via Velopack on next reboot
 
 ---
@@ -113,7 +113,7 @@
 **Plans**: 4 plans (4 waves)
 - [x] 06-01-PLAN.md — Wave-0 test scaffolds: retry_task_test + pending_jobs_test RED stubs, config_store_test user_version 1→2 (RES-01/02/03/04)
 - [x] 06-02-PLAN.md — Migration v2 ('printing' status) + print_worker status='printing' fence + retry_queue INSERT on failure (RES-01/04)
-- [ ] 06-03-PLAN.md — retry_task.rs (crash recovery + 5s poll + 3×/30s retry + toast/red-tray exhaustion) + health strings + main.rs spawn (RES-01/02/04)
+- [x] 06-03-PLAN.md — retry_task.rs (crash recovery + 5s poll + 3×/30s retry + toast/red-tray exhaustion) + health strings + main.rs spawn (RES-01/02/04)
 - [x] 06-04-PLAN.md — fetch_pending_jobs() + pusher/client.rs pending-pull on reconnect with CR-02 validation + dedup (RES-03)
 
 ### Phase 7: Auto-Update + Distribution Polish
@@ -139,7 +139,7 @@
 | 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
 | 4. Pusher Event Stream | 2/2 | Complete   | 2026-07-16 |
 | 5. Job Pipeline | 2/2 | Complete   | 2026-07-16 |
-| 6. Resilience | 3/4 | In Progress|  |
+| 6. Resilience | 4/4 | Complete   | 2026-07-16 |
 | 7. Auto-Update + Distribution Polish | 0/0 | Not started | - |
 
 ---
