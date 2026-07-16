@@ -133,8 +133,14 @@ pub async fn activate(
         }
         403 | 404 => Err(ActivateError::InvalidSerial),
         409 => Err(ActivateError::AlreadyActiveOther),
+        // 2xx other than 200 (e.g. 201, 204): error_for_status() returns Ok for these,
+        // so unwrap_err() would panic. Parse as ActivateResponse to produce a reqwest::Error
+        // (the JSON parse will fail, giving us a typed error without calling unwrap_err).
+        201..=299 => Err(ActivateError::Transport(
+            resp.json::<ActivateResponse>().await.unwrap_err(),
+        )),
         _ => {
-            // Convert non-2xx status to a reqwest error via error_for_status
+            // Non-2xx, non-handled status: error_for_status() is guaranteed to return Err here.
             Err(ActivateError::Transport(
                 resp.error_for_status().unwrap_err(),
             ))
