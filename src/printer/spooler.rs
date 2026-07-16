@@ -81,11 +81,13 @@ unsafe fn submit_job(
     printer_name: &str,
     data: &[u8],
 ) -> Result<(), PrinterError> {
-    let doc_name: Vec<u16> = "BrevlyPrint\0".encode_utf16().collect();
+    // WR-06: use .chain(std::iter::once(0)) for null termination — consistent with name_w
+    // on line 56 and less error-prone than embedding \0 in the string literal.
+    let doc_name: Vec<u16> = "BrevlyPrint".encode_utf16().chain(std::iter::once(0)).collect();
     // CRITICAL C1: pDatatype MUST be "RAW" or ESC/POS becomes silent garbage (GDI/EMF).
     // This is the load-bearing detail — omitting "RAW" causes the spooler to interpret
     // ESC/POS bytes as EMF/GDI and produce no visible output. Validated by test-print (D-08).
-    let datatype: Vec<u16> = "RAW\0".encode_utf16().collect(); // CRITICAL C1: RAW
+    let datatype: Vec<u16> = "RAW".encode_utf16().chain(std::iter::once(0)).collect(); // CRITICAL C1: RAW
 
     let doc_info = DOC_INFO_1W {
         pDocName: windows::core::PWSTR(doc_name.as_ptr() as *mut u16),
