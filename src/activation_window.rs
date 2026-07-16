@@ -434,6 +434,10 @@ fn poll_activate_result(state: &mut ActivationFormState, ctx: &egui::Context) {
             state.serial_error =
                 Some("Sem conexão com o servidor — verifique a internet.".into());
         }
+        Some(Err(ActivateError::UnexpectedStatus(code))) => {
+            state.serial_error =
+                Some(format!("Erro inesperado do servidor ({code}). Tente novamente."));
+        }
         None => {
             // No result yet (shouldn't reach here due to early return above).
         }

@@ -267,6 +267,13 @@ impl App {
 // ── main ─────────────────────────────────────────────────────────────────────
 
 fn main() -> anyhow::Result<()> {
+    // Install ring as the rustls CryptoProvider before any TLS code runs.
+    // Both aws-lc-rs and ring are pulled in transitively (reqwest + tungstenite),
+    // so rustls cannot auto-select one — explicit install is required.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok(); // ok() = ignore if already installed (e.g. in tests)
+
     // OQ3: Velopack bootstrapper MUST be the very first call in main() (Windows-only).
     // On Linux this is a no-op compile-time guard.
     #[cfg(windows)]
