@@ -16,7 +16,7 @@ use thiserror::Error;
 /// Default Noren base URL, used when the `NOREN_BASE_URL` env var is not set at compile time.
 ///
 /// IMPORTANT: must use `https://` for TLS validation via reqwest + rustls (T-02-01).
-pub const NOREN_BASE_URL_DEFAULT: &str = "https://app.noren.com.br";
+pub const NOREN_BASE_URL_DEFAULT: &str = "https://noren.app.br";
 
 /// Resolve the Noren base URL.
 ///
