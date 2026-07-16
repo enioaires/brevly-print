@@ -31,13 +31,18 @@ async fn spawn_stub(status: u16, body: &'static str) -> String {
 
     tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.expect("accept");
-        // Drain the request headers (read and discard)
+        // WR-05: drain request headers (fixed-size read is enough for test payloads;
+        // shut down the write half before dropping so reqwest sees a clean EOF rather
+        // than a connection-reset when the socket closes while it may still be writing).
         let mut buf = [0u8; 4096];
         let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
         socket
             .write_all(response.as_bytes())
             .await
             .expect("write response");
+        // Graceful half-close: signal EOF on the write side so reqwest finishes reading
+        // the response body before the full socket closes.
+        socket.shutdown().await.ok();
     });
 
     format!("http://127.0.0.1:{port}")
