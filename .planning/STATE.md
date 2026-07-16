@@ -85,8 +85,8 @@ Progress: [█░░░░░░] 1/7 phases complete
 
 - [ ] Phase 1 spike: confirm `tao` + raw `egui` approach (or document subprocess fallback)
 - [ ] Coordinate Noren backend `/api/agent/` contract implementation (parallel workstream)
-- [ ] Procure Authenticode OV certificate (needed for Phase 3 distributable)
-- [ ] Plan SmartScreen reputation period (2-6 weeks after first signed release)
+- [ ] Procure Authenticode OV certificate — CI signing step ready (CODESIGN_PFX_BASE64 + CODESIGN_PFX_PASSWORD secrets needed in GitHub repo). SC-4 (signed installer) gates on this.
+- [ ] Plan SmartScreen reputation warm-up: OV-signed but new binary shows initial warnings; clears after ~hundreds of clean installs (D-14; see CLAUDE.md signing notes). No code task — timeline expectation for owner.
 
 ### Blockers
 
