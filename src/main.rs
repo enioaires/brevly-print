@@ -5,8 +5,9 @@
 //!   2. `init_app_dir()` — creates `BrevlyPrint/` in the platform data dir
 //!   3. `open_and_migrate()` — migrates `state.db` to schema v1
 //!   4. `config_store::set/get` — one round-trip to prove the store is live
-//!   5. `credential_store()` + `save/load` — one round-trip through the `CredentialStore` trait
-//!   6. `EventLoop::<UserEvent>::with_user_event()` + `run_app()` — drives the egui window
+//!   5. Credential probe (ACT-07): NotFound/Corrupt → activation window, Ok → Phase 3 runtime
+//!   6. `tokio::runtime::Builder::new_multi_thread()` runtime built BEFORE the event loop (Pitfall 3)
+//!   7. `EventLoop::<UserEvent>::with_user_event()` + `run_app()` — drives the egui window
 
 use anyhow::Context as _;
 use winit::{
@@ -16,9 +17,10 @@ use winit::{
 };
 
 use brevly_print::{
+    activation_window::ActivationWindow,
     app_dir::init_app_dir,
     config_store,
-    credential_store::credential_store,
+    credential_store::{credential_store, CredentialError, CredentialStore as _},
 };
 
 // ── UserEvent placeholder (tray wiring is Phase 3) ──────────────────────────
@@ -36,8 +38,18 @@ enum UserEvent {
 
 /// The top-level `ApplicationHandler` that drives the winit event loop.
 struct App {
-    /// The spike window renderer; `None` until `resumed()` creates the window and wgpu context.
-    window: Option<brevly_print::spike_window::SpikeWindow>,
+    /// The activation window renderer; `None` until `resumed()` creates the window.
+    window: Option<ActivationWindow>,
+    /// Persistent multi-thread tokio runtime handle (Pattern 2 / Pitfall 3).
+    rt: tokio::runtime::Handle,
+    /// Shared reqwest HTTP client (Pitfall 6: create once, reuse).
+    http: reqwest::Client,
+    /// Whether the startup credential check found NotFound/Corrupt (shows re-activation banner).
+    is_reactivation: bool,
+    /// App directory path (needed by save flow).
+    app_dir: std::path::PathBuf,
+    /// SQLite connection (needed by save flow config_store::set calls).
+    conn: rusqlite::Connection,
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -45,10 +57,16 @@ impl ApplicationHandler<UserEvent> for App {
         // Create window + wgpu surface + egui renderer here (Pitfall 2: must be in resumed()).
         // Skip if already initialised (resumed() may be called more than once on some platforms).
         if self.window.is_none() {
-            match brevly_print::spike_window::SpikeWindow::new(event_loop) {
+            match ActivationWindow::new(
+                event_loop,
+                self.rt.clone(),
+                self.http.clone(),
+                self.is_reactivation,
+                self.app_dir.clone(),
+            ) {
                 Ok(w) => self.window = Some(w),
                 Err(e) => {
-                    eprintln!("[brevly-print] Failed to create window: {e:#}");
+                    eprintln!("[brevly-print] Failed to create activation window: {e:#}");
                     event_loop.exit();
                 }
             }
@@ -61,22 +79,27 @@ impl ApplicationHandler<UserEvent> for App {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let Some(spike) = self.window.as_mut() else { return };
+        let Some(window) = self.window.as_mut() else { return };
 
         // Forward to egui-winit first; if the event was consumed by egui, don't process it further.
-        let response = spike.handle_input(&event);
+        let response = window.handle_input(&event);
         if response.consumed {
             // Still need to redraw if egui requested it.
             if response.repaint {
-                spike.window().request_redraw();
+                window.window().request_redraw();
             }
             return;
         }
 
         match event {
             WindowEvent::RedrawRequested => {
-                if let Err(e) = spike.draw() {
+                if let Err(e) = window.draw(&self.conn) {
                     eprintln!("[brevly-print] Draw error: {e:#}");
+                }
+                // Check if the window requested exit (save flow completed).
+                if window.should_exit() {
+                    println!("[brevly-print] Activation save complete — exiting.");
+                    event_loop.exit();
                 }
             }
             WindowEvent::CloseRequested => {
@@ -84,12 +107,12 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
-                spike.resize(size);
-                spike.window().request_redraw();
+                window.resize(size);
+                window.window().request_redraw();
             }
             _ => {
                 // Request a redraw so egui stays responsive (e.g., cursor move, focus change).
-                spike.window().request_redraw();
+                window.window().request_redraw();
             }
         }
     }
@@ -106,9 +129,9 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         // Request a redraw every time the event loop is idle so egui can process
-        // animations and pending repaints.
-        if let Some(spike) = self.window.as_ref() {
-            spike.window().request_redraw();
+        // animations, pending repaints, and the oneshot result polling (Pattern 2).
+        if let Some(window) = self.window.as_ref() {
+            window.window().request_redraw();
         }
     }
 }
@@ -122,6 +145,18 @@ fn main() -> anyhow::Result<()> {
     velopack::VelopackApp::build().run();
     // (Non-Windows: no velopack bootstrapper call needed — the update flow is Windows-only.)
 
+    // ── Build the multi-thread tokio runtime BEFORE the event loop (Pitfall 3) ──
+    // Keep the Runtime alive in this scope for the entire process lifetime.
+    // The `Handle` is cloned into `App` and passed to the activation window.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build tokio runtime")?;
+    let rt_handle = rt.handle().clone();
+
+    // Build a shared reqwest client once (Pitfall 6).
+    let http = reqwest::Client::new();
+
     // ── Startup wiring (D-17: init_app_dir before any file ops) ─────────────
     let app_dir = init_app_dir().context("Failed to create BrevlyPrint app directory")?;
     println!("[brevly-print] App dir: {}", app_dir.display());
@@ -132,22 +167,36 @@ fn main() -> anyhow::Result<()> {
         .context("Failed to open or migrate state.db")?;
     println!("[brevly-print] state.db migrated (user_version=1)");
 
-    // Probe config store: write + read back one row.
-    config_store::set(&conn, "skeleton_probe", "ok")
-        .context("Failed to write skeleton_probe to config")?;
-    let probe_val = config_store::get(&conn, "skeleton_probe")
-        .context("Failed to read skeleton_probe from config")?;
-    println!("[brevly-print] config skeleton_probe = {:?}", probe_val);
-    assert_eq!(probe_val.as_deref(), Some("ok"), "config round-trip failed");
-
-    // Probe credential store: save + load through the CredentialStore trait (T-1-01).
+    // ── Credential check (ACT-07) ────────────────────────────────────────────
+    // NotFound|Corrupt → activation window (first run or re-activation)
+    // Ok(_)           → Phase 3 runtime (already activated)
+    // Io(e)           → fatal I/O error, propagate
     let cred = credential_store(&app_dir);
-    use brevly_print::credential_store::CredentialStore as _;
-    cred.save(b"skeleton-dummy")
-        .context("Credential save failed")?;
-    let loaded = cred.load().context("Credential load failed")?;
-    assert_eq!(loaded, b"skeleton-dummy", "credential round-trip mismatch");
-    println!("[brevly-print] Credential round-trip: OK");
+    let needs_activation = match cred.load() {
+        Ok(_token) => {
+            // Already activated. Phase 3 will start the tray runtime here.
+            // For Phase 2, we log and exit 0 (no tray yet).
+            println!("[brevly-print] Credential found — agent already activated. (Phase 3: start tray runtime here)");
+            false
+        }
+        Err(CredentialError::NotFound) => {
+            println!("[brevly-print] No credential found — opening activation window.");
+            true
+        }
+        Err(CredentialError::Corrupt(_)) => {
+            println!("[brevly-print] Credential corrupt — opening re-activation window.");
+            true
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(e)).context("Credential I/O error on startup");
+        }
+    };
+
+    // ── Phase 3 stub: if already activated, exit cleanly ─────────────────────
+    if !needs_activation {
+        println!("[brevly-print] Runtime phase not yet implemented (Phase 3). Exiting.");
+        return Ok(());
+    }
 
     // ── winit event loop ─────────────────────────────────────────────────────
     let event_loop = EventLoop::<UserEvent>::with_user_event()
@@ -157,8 +206,17 @@ fn main() -> anyhow::Result<()> {
 
     // Phase 3: wire tray/menu event forwarding via event_loop.create_proxy() here.
 
-    let mut app = App { window: None };
+    let mut app = App {
+        window: None,
+        rt: rt_handle,
+        http,
+        is_reactivation: matches!(cred.load(), Err(CredentialError::Corrupt(_))),
+        app_dir: app_dir.clone(),
+        conn,
+    };
     event_loop.run_app(&mut app).context("Event loop error")?;
 
+    // Keep runtime alive until process fully exits.
+    drop(rt);
     Ok(())
 }
