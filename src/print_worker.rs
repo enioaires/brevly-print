@@ -89,15 +89,27 @@ pub async fn run_print_worker(
         // C4 applies here too: UPDATE must precede ack on every path.
         if !enabled_types.is_empty() && !enabled_types.contains(&event.job_type) {
             // UPDATE before ack (C4) — disabled-type path.
-            if let Err(e) = conn.execute(
-                "UPDATE printed_jobs SET status='printed', printed_at=datetime('now') WHERE job_id=?1",
+            // WR-02: on UPDATE failure, skip the ack and leave status='pending'.
+            // If we acked after a failed UPDATE, the row stays 'pending' with no path to
+            // advance it if Noren's queue has already dequeued the job on receipt of the ack.
+            match conn.execute(
+                "UPDATE printed_jobs SET status='printed', printed_at=datetime('now'), attempt=attempt+1 WHERE job_id=?1",
                 rusqlite::params![event.job_id],
             ) {
-                eprintln!(
-                    "[brevly-print] Print worker: SQLite update failed for {}: {e:#}",
-                    event.job_id
-                );
-                // Still attempt ack — Noren won't resend anyway.
+                Ok(0) => {
+                    eprintln!(
+                        "[brevly-print] Print worker: UPDATE matched 0 rows for {} (disabled-type) — row absent from DB",
+                        event.job_id
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!(
+                        "[brevly-print] Print worker: SQLite update failed for {} (disabled-type): {e:#}",
+                        event.job_id
+                    );
+                    continue; // WR-02: skip ack — leave status='pending' for Phase 6 retry
+                }
             }
             if let Err(e) = ack_job(&http, &base_url, &agent_token, &event.job_id).await {
                 eprintln!(
@@ -134,15 +146,24 @@ pub async fn run_print_worker(
 
         // UPDATE before ack — C4 constraint (D-09 / T-05-04).
         // This must textually and temporally precede the ack_job() call below.
-        if let Err(e) = conn.execute(
-            "UPDATE printed_jobs SET status='printed', printed_at=datetime('now') WHERE job_id=?1",
+        // WR-03: increment attempt counter so Phase 6 retry logic can apply backoff / give up.
+        // WR-05: log when rows_affected == 0 (job_id absent — INSERT may have failed silently).
+        match conn.execute(
+            "UPDATE printed_jobs SET status='printed', printed_at=datetime('now'), attempt=attempt+1 WHERE job_id=?1",
             rusqlite::params![event.job_id],
         ) {
-            eprintln!(
-                "[brevly-print] Print worker: SQLite update failed for {}: {e:#}",
+            Ok(0) => eprintln!(
+                "[brevly-print] Print worker: UPDATE matched 0 rows for {} — row absent from DB",
                 event.job_id
-            );
-            // Still proceed to ack — Noren won't resend; status='printed' is best-effort.
+            ),
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!(
+                    "[brevly-print] Print worker: SQLite update failed for {}: {e:#}",
+                    event.job_id
+                );
+                // Still proceed to ack — Noren won't resend; status='printed' is best-effort.
+            }
         }
 
         // Ack the job back to Noren (PRT-08).
