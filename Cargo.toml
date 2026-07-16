@@ -46,6 +46,12 @@ rand         = "0.8"
 # Base64 encoding/decoding (Phase 5 — already a transitive dep 0.22.1; making it explicit)
 base64 = "0.22"
 
+# SHA-256 integrity verification (Phase 7 — portable, used in src/update/verify.rs)
+sha2 = "0.11.0"
+
+# Semver version comparison (Phase 7 — portable, used in src/update/check.rs)
+semver = "1.0.28"
+
 # Error handling
 thiserror = "2"
 anyhow    = "1"

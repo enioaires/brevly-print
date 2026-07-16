@@ -23,5 +23,6 @@ pub mod retry_task;
 // but the module declaration in lib.rs does not need a cfg gate because the file-level
 // #![cfg(windows)] prevents the module body from compiling on non-Windows):
 pub mod tray_runtime;
+pub mod update;
 
 pub use app_dir::init_app_dir;
