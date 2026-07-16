@@ -12,7 +12,7 @@
 - [x] **Phase 1: Foundation + Thread Model Spike** - Prove the `winit 0.30` + raw `egui` (egui-winit + egui-wgpu) event-loop integration; initialize SQLite schema (rusqlite_migration v1) and DPAPI credential infra
 - [x] **Phase 2: Activation** - One-time activation window with serial validation, printer selection, DPAPI credential storage, and autostart registration (completed 2026-07-16)
 - [x] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer (completed 2026-07-16)
-- [ ] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic
+- [x] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic (completed 2026-07-16)
 - [ ] **Phase 5: Job Pipeline** - End-to-end print path: event → fetch bytes → WritePrinter/serial → SQLite dedup → ack
 - [ ] **Phase 6: Resilience** - Printer-failure retry, Windows toast notifications, offline job pull, and boot-crash recovery
 - [ ] **Phase 7: Auto-Update + Distribution Polish** - SHA256-verified silent auto-update via Velopack on next reboot
@@ -80,7 +80,7 @@
   4. Channel auth is re-requested from `/api/agent/pusher/auth` on every reconnect using the fresh `socket_id`; cached auth strings are never reused
 **Plans**: 2 plans (2 waves)
 - [x] 04-01-PLAN.md — Tested primitives: futures-util+rand deps, D-01 config persistence fix, pusher protocol types+parsers (double-decode, socket_id), backoff, pusher_auth() + HTTP-contract tests (EVT-01/02/03 seams)
-- [ ] 04-02-PLAN.md — Vertical slice: run_pusher_loop reconnect state machine (connect→fresh auth→subscribe→ping/pong zombie→backoff), INSERT OR IGNORE dedup fence, debug fake-event shim, main.rs Runtime-mode wiring (EVT-01/02/03 runtime)
+- [x] 04-02-PLAN.md — Vertical slice: run_pusher_loop reconnect state machine (connect→fresh auth→subscribe→ping/pong zombie→backoff), INSERT OR IGNORE dedup fence, debug fake-event shim, main.rs Runtime-mode wiring (EVT-01/02/03 runtime)
 
 ### Phase 5: Job Pipeline
 **Goal**: Every print event results in the correct ESC/POS bytes being written to the thermal printer within 1 second, with delivery confirmed back to Noren and duplicate prints prevented
@@ -131,7 +131,7 @@
 | 1. Foundation + Thread Model Spike | 3/3 | Complete | 2026-07-15 |
 | 2. Activation | 3/3 | Complete   | 2026-07-16 |
 | 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
-| 4. Pusher Event Stream | 1/2 | In Progress|  |
+| 4. Pusher Event Stream | 2/2 | Complete   | 2026-07-16 |
 | 5. Job Pipeline | 0/0 | Not started | - |
 | 6. Resilience | 0/0 | Not started | - |
 | 7. Auto-Update + Distribution Polish | 0/0 | Not started | - |
