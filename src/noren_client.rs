@@ -165,7 +165,7 @@ pub async fn activate(
 /// path, query string, or encoding: `/`, `.`, `\`, `?`, `#`, `%`, or NUL.
 /// A crafted `job_id` such as `"../admin"` or `"foo%2F..%2Fbar"` would otherwise
 /// produce requests to unintended backend endpoints (path traversal).
-fn validate_job_id(job_id: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_job_id(job_id: &str) -> anyhow::Result<()> {
     if job_id.is_empty() {
         anyhow::bail!("job_id is empty");
     }
@@ -291,6 +291,66 @@ pub async fn fetch_job_bytes(
                 .context("fetch_job_bytes: base64 decode error")
         }
         status => anyhow::bail!("fetch_job_bytes: unexpected status {status}"),
+    }
+}
+
+/// A single pending (non-acked) print job returned by `GET /api/agent/jobs/pending`.
+///
+/// Noren returns camelCase keys (`jobId`, `type`). The `type` key would conflict with
+/// a Rust keyword, so we use per-field `#[serde(rename = ...)]` instead of a blanket
+/// `rename_all = "camelCase"` (D-09 — which would require the Rust field to be named
+/// `job_type` mapping to `jobType`, but the wire key is literally `type`).
+#[derive(Deserialize, Debug, Clone)]
+pub struct PendingJob {
+    #[serde(rename = "jobId")]
+    pub job_id: String,
+    #[serde(rename = "type")]
+    pub job_type: String,
+}
+
+/// Fetch non-acked print jobs from the Noren backend for offline recovery (RES-03).
+///
+/// `GET /api/agent/jobs/pending` — Bearer agentToken auth; 403 on invalid/missing token.
+/// Returns jobs sorted by createdAt ASC, max 100 per call.
+///
+/// Response shape is a WRAPPER OBJECT `{ "jobs": [...] }` (D-09) — NOT a bare array.
+/// Each element has keys `jobId` (camelCase) and `type`.
+///
+/// # Security
+///
+/// `agent_token` is passed ONLY via `.bearer_auth()` — never in any log or
+/// error string (T-02-02 / T-06-08). Callers MUST call `validate_job_id` on each
+/// returned `job_id` before passing it to `insert_print_job` or URL construction (CR-02).
+pub async fn fetch_pending_jobs(
+    client: &reqwest::Client,
+    base_url: &str,
+    agent_token: &str,
+) -> anyhow::Result<Vec<PendingJob>> {
+    // Local deserialize target for the `{ "jobs": [...] }` wrapper — avoids polluting
+    // the module namespace (mirrors BytesResponse pattern in fetch_job_bytes).
+    #[derive(Deserialize)]
+    struct PendingJobsResponse {
+        jobs: Vec<PendingJob>,
+    }
+
+    let url = format!("{base_url}/api/agent/jobs/pending");
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(agent_token) // T-02-02: token passed here, never in eprintln!
+        .send()
+        .await
+        .context("fetch_pending_jobs: HTTP transport error")?;
+
+    match resp.status().as_u16() {
+        200 => {
+            let body: PendingJobsResponse = resp
+                .json()
+                .await
+                .context("fetch_pending_jobs: response parse error")?;
+            Ok(body.jobs)
+        }
+        status => anyhow::bail!("fetch_pending_jobs: unexpected status {status}"),
     }
 }
 
