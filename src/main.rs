@@ -400,15 +400,21 @@ fn main() -> anyhow::Result<()> {
 
     if is_runtime {
         // Read Pusher credentials from ConfigStore (D-01).
+        // Treat missing or empty credentials as a hard error so operators can
+        // diagnose misconfiguration immediately rather than seeing a perpetual
+        // reconnect loop with generic WS errors (WR-01).
         let pusher_key = config_store::get(&conn, "pusher_key")
             .context("Failed to read pusher_key from ConfigStore")?
-            .unwrap_or_default();
+            .filter(|s| !s.is_empty())
+            .context("pusher_key is missing from ConfigStore — re-activate to restore")?;
         let pusher_cluster = config_store::get(&conn, "pusher_cluster")
             .context("Failed to read pusher_cluster from ConfigStore")?
-            .unwrap_or_default();
+            .filter(|s| !s.is_empty())
+            .context("pusher_cluster is missing from ConfigStore — re-activate to restore")?;
         let tenant_id = config_store::get(&conn, "tenant_id")
             .context("Failed to read tenant_id from ConfigStore")?
-            .unwrap_or_default();
+            .filter(|s| !s.is_empty())
+            .context("tenant_id is missing from ConfigStore — re-activate to restore")?;
         let auth_url = config_store::get(&conn, "noren_base_url")
             .context("Failed to read noren_base_url from ConfigStore")?
             .unwrap_or_else(noren_base_url);
