@@ -116,24 +116,26 @@ jobs:
         id: update_info
         shell: pwsh
         run: |
-          # vpk produces assets.win.json listing artifacts (type, fileName, sha256) per artifact.
-          # [ASSUMED A5]: assets.win.json contains a sha256 field per asset. If absent, compute manually:
-          #   $sha256 = (Get-FileHash -Algorithm SHA256 $fullPkgPath).Hash.ToLower()
-          $assets = Get-Content Releases/assets.win.json | ConvertFrom-Json
-          $fullPkg = $assets.assets | Where-Object { $_.type -eq "Full" } | Select-Object -First 1
+          # The agent (src/update/mod.rs::try_check_and_stage) downloads the full .nupkg from
+          # downloadUrl and verifies THIS sha256 via verify_sha256 before staging. So compute the
+          # hash directly from the file on disk — schema-independent, does NOT parse assets.win.json
+          # (whose exact field layout was an unverified assumption that broke on the first Windows run).
           $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
-          # Use sha256 from assets.win.json if present; fall back to Get-FileHash.
-          if ($fullPkg.sha256) {
-            $sha256 = $fullPkg.sha256
-          } else {
-            $fullPkgPath = Join-Path "Releases" $fullPkg.fileName
-            $sha256 = (Get-FileHash -Algorithm SHA256 $fullPkgPath).Hash.ToLower()
+          # Velopack names the full package "*-full.nupkg"; delta is "*-delta.nupkg".
+          $fullPkg = Get-ChildItem Releases -Filter "*-full.nupkg" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $fullPkg) {
+            # Fallback: largest non-delta .nupkg in Releases/.
+            $fullPkg = Get-ChildItem Releases -Filter "*.nupkg" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notlike "*-delta.nupkg" } |
+              Sort-Object Length -Descending | Select-Object -First 1
           }
+          if (-not $fullPkg) { Write-Error "No full .nupkg found in Releases/ — vpk pack may have failed."; exit 1 }
+          $sha256 = (Get-FileHash -Algorithm SHA256 $fullPkg.FullName).Hash.ToLower()
           echo "version=$version" >> $env:GITHUB_OUTPUT
-          echo "filename=$($fullPkg.fileName)" >> $env:GITHUB_OUTPUT
+          echo "filename=$($fullPkg.Name)" >> $env:GITHUB_OUTPUT
           echo "sha256=$sha256" >> $env:GITHUB_OUTPUT
           echo "--- Noren /api/agent/version payload ---"
-          echo "{ version: $version, downloadUrl: '<S3_BASE>/$($fullPkg.fileName)', sha256: $sha256 }"
+          echo "{ version: $version, downloadUrl: '<HOST_BASE>/$($fullPkg.Name)', sha256: $sha256 }"
           # NOTE: Actual S3/Cloudflare upload + /api/agent/version endpoint wiring is a
           # Noren-backend dependency (D-06). The upload step is intentionally absent here.
 
