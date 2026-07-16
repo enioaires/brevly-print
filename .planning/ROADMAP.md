@@ -13,7 +13,7 @@
 - [x] **Phase 2: Activation** - One-time activation window with serial validation, printer selection, DPAPI credential storage, and autostart registration (completed 2026-07-16)
 - [x] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer (completed 2026-07-16)
 - [x] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic (completed 2026-07-16)
-- [ ] **Phase 5: Job Pipeline** - End-to-end print path: event → fetch bytes → WritePrinter/serial → SQLite dedup → ack
+- [x] **Phase 5: Job Pipeline** - End-to-end print path: event → fetch bytes → WritePrinter/serial → SQLite dedup → ack (completed 2026-07-16)
 - [ ] **Phase 6: Resilience** - Printer-failure retry, Windows toast notifications, offline job pull, and boot-crash recovery
 - [ ] **Phase 7: Auto-Update + Distribution Polish** - SHA256-verified silent auto-update via Velopack on next reboot
 
@@ -97,7 +97,7 @@
   6. Printing works via both paths: a USB thermal printer enumerated as a Windows printer (WritePrinter RAW) and a printer on a COM port (serialport)
 **Plans**: 2 plans (2 waves)
 - [x] 05-01-PLAN.md — HTTP primitives: base64 dep, fetch_job_bytes() + ack_job() in noren_client.rs, Wave-0 contract tests + print_worker skeleton (PRT-01, PRT-08)
-- [ ] 05-02-PLAN.md — Print worker vertical slice: run_print_worker() fetch→print→UPDATE→ack pipeline, enabled_types filter, main.rs spawn wiring (PRT-02/03/04/05/06/07/09)
+- [x] 05-02-PLAN.md — Print worker vertical slice: run_print_worker() fetch→print→UPDATE→ack pipeline, enabled_types filter, main.rs spawn wiring (PRT-02/03/04/05/06/07/09)
 
 ### Phase 6: Resilience
 **Goal**: The agent handles printer failures and internet outages gracefully — retrying locally, alerting the operator in plain language, and pulling any missed jobs on reconnect — so no ticket is permanently lost
@@ -134,7 +134,7 @@
 | 2. Activation | 3/3 | Complete   | 2026-07-16 |
 | 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
 | 4. Pusher Event Stream | 2/2 | Complete   | 2026-07-16 |
-| 5. Job Pipeline | 1/2 | In Progress|  |
+| 5. Job Pipeline | 2/2 | Complete   | 2026-07-16 |
 | 6. Resilience | 0/0 | Not started | - |
 | 7. Auto-Update + Distribution Polish | 0/0 | Not started | - |
 
