@@ -954,22 +954,25 @@ This phase is NOT a rename/refactor phase. Omit this section.
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **In-loop ActivationWindow recreation with wgpu**
    - What we know: winit 0.30 supports multiple windows; wgpu surface is tied to the window; drop order matters.
    - What's unclear: whether dropping `ActivationWindow` (which owns its wgpu `Surface` + `Device`) then immediately creating a new one in the same event loop process causes any wgpu device state leaks on Windows DX12.
    - Recommendation: spike this in the first task of Phase 3. If it fails, fall back to exit-relaunch on "Reativar" (D-10 allows this).
+   - **RESOLVED (03-02 Plan, Task 1):** Use `Option<ActivationWindow>` — drop the existing instance before creating a new one. The `App.activation_window` field is set to `None` before reconstructing; wgpu surface lifetime is bounded to the struct. If device leaks surface on DX12, the exit-relaunch fallback (D-10) is explicitly permitted.
 
 2. **`vpk` version and `dotnet` on `windows-latest` GHA runner**
    - What we know: `vpk` is a `dotnet` global tool; `windows-latest` runners include dotnet 8/9.
    - What's unclear: whether `dotnet tool install -g vpk` downloads vpk 1.x or an older version.
    - Recommendation: pin the version: `dotnet tool install -g vpk --version 1.*`.
+   - **RESOLVED (03-03 Plan, Task 1):** CI step pins `dotnet tool install -g vpk --version "1.*"` — always installs 1.x regardless of toolchain defaults.
 
 3. **`HKCU Run` path format with `auto-launch` 0.6**
    - What we know: `auto-launch` 0.6 on Windows writes `{app_path} {args}` to `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`. The `app_path` comes from `AutoLaunch::new(name, app_path, mode, args)`.
    - What's unclear: whether Phase 2's `auto-launch` call used `current_exe()` or a constructed path, and whether that path was the Velopack stub or the `current\` exe.
    - Recommendation: audit Phase 2's `activation_state.rs` save flow for the exact `app_path` argument. If it used `current_exe()`, update to use Pattern 8's stub detection.
+   - **RESOLVED (03-02 Plan, Task 3):** `activation_state.rs` save flow is fixed — detect `Update.exe` sibling in parent dir of `current_exe()`; if found, register grandparent path (the Velopack root stub) instead. Comment `// RUN-03` marks the fix.
 
 ---
 
