@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use crate::{
     config_store,
     noren_client::{ack_job, fetch_job_bytes},
-    printer::{printer_from_entry, PrinterId},
+    printer::{printer_from_entry, printer_id_from_config},
     pusher::protocol::PrintEvent,
 };
 
@@ -63,23 +63,15 @@ pub async fn run_print_worker(
         .unwrap_or_default();
 
     // ── Read printer configuration (D-03) ────────────────────────────────────────
-    let printer_name = match config_store::get(&conn, "printer_name")
-        .unwrap_or(None)
-        .filter(|s| !s.is_empty())
-    {
-        Some(name) => name,
+    // WR-05 / IN-01: use the shared, validated config→PrinterId helper so the worker
+    // and the retry task cannot diverge and an unexpected printer_type is not silently
+    // routed to the spooler.
+    let printer_id = match printer_id_from_config(&conn) {
+        Some(id) => id,
         None => {
-            eprintln!("[brevly-print] Print worker: printer_name missing from ConfigStore");
+            eprintln!("[brevly-print] Print worker: printer not configured — exiting");
             return;
         }
-    };
-    let printer_type = config_store::get(&conn, "printer_type")
-        .unwrap_or(None)
-        .unwrap_or_default();
-    let printer_id = if printer_type == "serial" {
-        PrinterId::Serial(printer_name)
-    } else {
-        PrinterId::Spooler(printer_name)
     };
     // Hold the Box<dyn Printer> for the lifetime of the task (C1: RAW datatype
     // is hardcoded in WindowsSpoolerPrinter::print_raw; do not add intermediate layers).
@@ -141,14 +133,20 @@ pub async fn run_print_worker(
         // re-queues it at startup (D-05). Leave status='printing' on failure too —
         // the retry task owns the transition to 'failed'.
         // Also increments attempt so the success UPDATE does not double-count.
+        // WR-06: guard `status != 'printed'` so a duplicate/re-delivered event can never
+        // revive an already-completed job back to 'printing' (which would let it print
+        // twice). Ok(0) here on a re-delivery means "already printed — skip".
         match conn.execute(
-            "UPDATE printed_jobs SET status='printing', attempt=attempt+1 WHERE job_id=?1",
+            "UPDATE printed_jobs SET status='printing', attempt=attempt+1 WHERE job_id=?1 AND status != 'printed'",
             rusqlite::params![event.job_id],
         ) {
-            Ok(0) => eprintln!(
-                "[brevly-print] Print worker: UPDATE to 'printing' matched 0 rows for {} — row absent",
-                event.job_id
-            ),
+            Ok(0) => {
+                eprintln!(
+                    "[brevly-print] Print worker: fence UPDATE matched 0 rows for {} — already 'printed' or row absent; skipping",
+                    event.job_id
+                );
+                continue; // WR-06: do not re-print an already-completed (or absent) job
+            }
             Ok(_) => {}
             Err(e) => eprintln!(
                 "[brevly-print] Print worker: SQLite update to 'printing' failed for {}: {e:#}",

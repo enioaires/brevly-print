@@ -24,10 +24,10 @@ use brevly_print::{
     credential_store::{credential_store, CredentialError, CredentialStore as _},
     health_state::HealthState,
     print_worker::run_print_worker,
-    printer::{printer_from_entry, PrinterId},
+    printer::{printer_from_entry, printer_id_from_config},
     pusher::{run_pusher_loop, PrintEvent, PusherConfig},
     noren_client::noren_base_url,
-    retry_task::run_retry_task,
+    retry_task::{recover_orphans, run_retry_poll_loop},
 };
 
 #[cfg(windows)]
@@ -439,22 +439,12 @@ fn main() -> anyhow::Result<()> {
         // The retry task and print worker each hold their own Box<dyn Printer>; each impl
         // opens its own handle on every print_raw() call, so two concurrent calls are safe.
         //
-        // If printer_name is missing/empty, skip spawning the retry task — activation is
-        // incomplete and the print worker already hard-errors on missing printer.
-        let retry_printer_name = config_store::get(&conn, "printer_name")
-            .unwrap_or(None)
-            .filter(|s| !s.is_empty())
-            .unwrap_or_default();
-        let retry_printer_type = config_store::get(&conn, "printer_type")
-            .unwrap_or(None)
-            .unwrap_or_default();
-        let retry_printer_id = if retry_printer_type == "serial" {
-            PrinterId::Serial(retry_printer_name.clone())
-        } else {
-            PrinterId::Spooler(retry_printer_name.clone())
-        };
-        let has_retry_printer = !retry_printer_name.is_empty();
-        let printer_for_retry = printer_from_entry(&retry_printer_id);
+        // WR-05 / IN-01: use the same validated config→PrinterId helper as the print worker
+        // so the two cannot diverge. If printer_name is missing/empty, the helper returns
+        // None and we skip spawning the retry task — activation is incomplete and the print
+        // worker already hard-errors on a missing printer.
+        let printer_for_retry = printer_id_from_config(&conn).map(|id| printer_from_entry(&id));
+        let has_retry_printer = printer_for_retry.is_some();
 
         // Health closure for the retry task — same EventLoopProxy pattern as Pusher (D-03).
         let proxy_for_retry = event_loop.create_proxy();
@@ -491,6 +481,22 @@ fn main() -> anyhow::Result<()> {
             let _ = proxy_for_pusher.send_event(UserEvent::HealthChanged(state));
         };
 
+        // CR-02: run crash recovery to completion BEFORE spawning the print worker.
+        // This eliminates the double-print / concurrent-print_raw race by construction:
+        // recovery re-queues 'printing' orphans while NO live print worker exists yet, so
+        // every 'printing' row it observes is genuinely from a dead prior process — never
+        // a worker mid-print on the same job_id. We block_on here (main is sync) so the
+        // scan+re-queue finishes before rt_handle.spawn(run_print_worker) below.
+        if has_retry_printer {
+            let recover_token = retry_token.clone();
+            let recover_base_url = retry_base_url.clone();
+            let recover_db_path = retry_db_path.clone();
+            let recover_http = retry_http.clone();
+            rt_handle.block_on(async move {
+                recover_orphans(recover_db_path, recover_token, recover_base_url, recover_http).await;
+            });
+        }
+
         let pusher_db_path = db_path.clone();
         let pusher_http = http.clone();
         let pusher_tx = print_tx.clone();
@@ -499,15 +505,18 @@ fn main() -> anyhow::Result<()> {
         });
 
         // Phase 5: spawn print worker — consumes print_rx (D-01).
+        // Spawned AFTER recover_orphans() above has completed (CR-02).
         rt_handle.spawn(async move {
             run_print_worker(print_rx, worker_token, worker_base_url, worker_db_path, worker_http).await;
         });
 
-        // Phase 6: spawn retry task — fourth Tokio task (D-03).
+        // Phase 6: spawn the retry POLL loop — fourth Tokio task (D-03).
+        // Crash recovery already ran to completion above (CR-02), so the poll loop only
+        // retries rows that recovery placed in retry_queue plus rows the worker enqueued.
         // Skip if printer is not configured (activation incomplete — print worker also hard-errors).
-        if has_retry_printer {
+        if let Some(printer_for_retry) = printer_for_retry {
             rt_handle.spawn(async move {
-                run_retry_task(
+                run_retry_poll_loop(
                     retry_db_path,
                     retry_token,
                     retry_base_url,
