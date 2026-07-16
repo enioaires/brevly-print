@@ -974,12 +974,17 @@ fn handle_save(
     let tenant_id = state.tenant_id.clone().unwrap_or_default();
     let base_url = noren_base_url();
 
+    let pusher_key = state.pusher_key.clone().unwrap_or_default();
+    let pusher_cluster = state.pusher_cluster.clone().unwrap_or_default();
+
     let config_entries: Vec<(&str, String)> = vec![
-        ("printer_name",  printer_id_str),
-        ("printer_type",  printer_type.to_string()),
-        ("tenant_id",     tenant_id),
-        ("enabled_types", enabled_types_json),
+        ("printer_name",   printer_id_str),
+        ("printer_type",   printer_type.to_string()),
+        ("tenant_id",      tenant_id),
+        ("enabled_types",  enabled_types_json),
         ("noren_base_url", base_url),
+        ("pusher_key",     pusher_key),
+        ("pusher_cluster", pusher_cluster),
     ];
     for (key, value) in &config_entries {
         if let Err(e) = config_store::set(conn, key, value) {
