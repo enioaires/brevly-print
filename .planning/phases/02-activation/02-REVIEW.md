@@ -24,6 +24,14 @@ findings:
   info: 4
   total: 15
 status: issues_found
+fixed:
+  critical: 5
+  warning: 5
+  warning_skipped: 1
+  warning_skipped_ids: [WR-02]
+  warning_skip_reason: "WR-02 is a false positive — egui 0.35 changed CentralPanel::show to take &mut Ui (not &Context); current code is correct for the version in use"
+  info: 0
+  fixed_at: "2026-07-15"
 ---
 
 # Phase 02: Code Review Report
