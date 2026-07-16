@@ -3,7 +3,8 @@ phase: 06-resilience
 verified: 2026-07-16T00:00:00Z
 status: human_needed
 score: 4/4 must-have truths verified (implementation); 3 items require human testing
-overrides_applied: 0
+overrides_applied: 1
+resolution_note: "Owner approved 2026-07-16 (code-level verification). W-01 CLOSED — commit 414dee8 extracted process_due_retries_once() and activated retry_exhaustion_marks_failed + retry_task_smoke as real end-to-end tests (52 passed, 1 ignored). W-02 override accepted (see override_suggestions). 3 Windows-only items tracked in 06-HUMAN-UAT.md."
 mode: mvp
 human_verification:
   - test: "Windows toast appears after 3 failed retries"
@@ -20,9 +21,11 @@ warnings:
     concern: "Two Phase-6 integration tests are still #[ignore]d with todo!() bodies"
     detail: "tests/retry_task_test.rs retry_exhaustion_marks_failed (line 229) and retry_task_smoke (line 259) were authored as RED scaffolds in Wave 0 (06-01). run_retry_task / run_retry_poll_loop was implemented in Wave 2/3 (06-03), but these two stubs were never activated (still #[ignore = \"Wave 2: run_retry_task not yet implemented\"] with todo!()). The production poll loop has NO end-to-end test that drives 3-attempt exhaustion and asserts send_health(Problem) + toast side effects. The passing in-module retry_exhaustion_marks_failed unit test re-implements the exhaustion SQL inline (retry_task.rs:497) rather than calling run_poll_loop_on_conn, so it verifies the SQL invariant but not that the production loop executes that branch or fires the health/toast calls."
     severity: warning
+    status: resolved
+    resolution: "CLOSED by commit 414dee8. Extracted process_due_retries_once() from the poll loop (pure refactor, behavior unchanged) and activated both tests as #[tokio::test] driving the real function: retry_exhaustion_marks_failed asserts retry_queue DELETE + status='failed' + HealthState::Problem; retry_task_smoke asserts status='printed' + ack (200 stub) + HealthState::Connected. cargo test: 52 passed, 1 ignored (GPU smoke only)."
     files:
       - path: "tests/retry_task_test.rs"
-        issue: "Lines 229-266: two #[ignore]d todo!() stubs never activated after run_retry_task was implemented"
+        issue: "Lines 229-266: two #[ignore]d todo!() stubs never activated after run_retry_task was implemented (RESOLVED)"
   - id: W-02
     concern: "06-03 PLAN frontmatter key-link 'run_retry_task' pattern is stale (false-positive miss)"
     detail: "gsd-sdk verify.key-links reports main.rs → retry_task::run_retry_task NOT verified (\"pattern run_retry_task not found\"). This is a stale-frontmatter false positive: the CR-02 fix (commit c392a7b) intentionally split run_retry_task into recover_orphans() + run_retry_poll_loop() and rewired main.rs to call both (block_on(recover_orphans) at main.rs:496 BEFORE the worker spawn, then rt_handle.spawn(run_retry_poll_loop) at main.rs:519). The retry task IS spawned and wired; only the literal identifier changed. The 06-03 PLAN frontmatter and 06-03-SUMMARY (which claims 'main.rs contains run_retry_task: FOUND') were written before the CR-02 refactor and are now stale."
@@ -35,8 +38,8 @@ warnings:
 override_suggestions:
   - must_have: "src/main.rs spawns retry task via run_retry_task (rt_handle.spawn in is_runtime block)"
     reason: "CR-02 fix (commit c392a7b) intentionally split run_retry_task into recover_orphans() + run_retry_poll_loop() to eliminate the double-print race by construction. main.rs block_on(recover_orphans) BEFORE spawning the worker (line 496) and spawns run_retry_poll_loop (line 519). Same goal (retry task spawned and wired) achieved via a better design; only the literal identifier differs. PLAN/SUMMARY frontmatter is stale."
-    accepted_by: "REPLACE_WITH_YOUR_NAME"
-    accepted_at: "REPLACE_WITH_ISO_TIMESTAMP"
+    accepted_by: "Enio Aires (owner)"
+    accepted_at: "2026-07-16T19:50:00Z"
 ---
 
 # Phase 6: Resilience Verification Report
