@@ -70,7 +70,7 @@ pub fn enumerate_printers() -> Vec<PrinterEntry> {
 /// Construct a `Box<dyn Printer>` for the given `PrinterId`.
 ///
 /// On Windows: routes `Spooler(name)` to `WindowsSpoolerPrinter` and
-/// `Serial(port)` to `SerialPrinter` — **Plan 02 implements** the Windows impls.
+/// `Serial(port)` to `SerialPrinter`.
 /// On Linux: returns a `StubPrinter` for any id.
 pub fn printer_from_entry(id: &PrinterId) -> Box<dyn Printer> {
     #[cfg(windows)]
@@ -95,8 +95,8 @@ pub fn printer_from_entry(id: &PrinterId) -> Box<dyn Printer> {
 
 /// Enumerate Windows printers (spooler + COM ports) into a combined list.
 ///
-/// Called only on Windows. Plan 02 implements the Windows-specific body.
-/// Left as `todo!()` stubs annotated `// Plan 02 implements` per the plan spec.
+/// Returns spooler printers labelled "(USB)" and COM ports labelled "(Serial)".
+/// The Windows default printer is flagged with `is_default = true` (D-06).
 #[cfg(windows)]
 fn windows_enumerate_printers() -> Vec<PrinterEntry> {
     use printers::{get_default_printer, get_printers};
@@ -105,7 +105,8 @@ fn windows_enumerate_printers() -> Vec<PrinterEntry> {
     let default_name = get_default_printer().map(|p| p.name.clone());
     let mut entries = Vec::new();
 
-    // Spooler printers (USB path via Win32 spooler)
+    // Spooler printers (USB path via Win32 spooler).
+    // p.name is used verbatim — must not be transformed (Pitfall 5: exact name for OpenPrinterW).
     for p in get_printers() {
         let is_default = default_name.as_deref() == Some(p.name.as_str());
         entries.push(PrinterEntry {
@@ -115,7 +116,7 @@ fn windows_enumerate_printers() -> Vec<PrinterEntry> {
         });
     }
 
-    // COM port printers (serial path)
+    // COM port printers (serial path).
     if let Ok(ports) = available_ports() {
         for port in ports {
             entries.push(PrinterEntry {
