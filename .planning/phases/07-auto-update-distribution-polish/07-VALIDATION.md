@@ -1,9 +1,9 @@
 ---
 phase: 7
 slug: auto-update-distribution-polish
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-16
 ---
 
@@ -73,11 +73,11 @@ created: 2026-07-16
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 15s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies (verified by plan-checker Dimension 8a — all auto tasks have `cargo test`/`cargo build`/static-check commands)
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify (Dimension 8c pass)
+- [x] Wave 0 covers all MISSING references (Wave 0 files delivered by Plan 01; no `<automated>MISSING</automated>` refs)
+- [x] No watch-mode flags
+- [x] Feedback latency < 15s (all quick `cargo test --lib` / static checks)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-16 (plan-checker Dimension 8 pass; structure verified pre-execution)

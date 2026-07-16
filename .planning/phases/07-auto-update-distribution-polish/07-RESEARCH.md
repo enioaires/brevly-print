@@ -782,9 +782,14 @@ async fn try_check_and_stage(
 
 ---
 
-## Open Questions
+## Open Questions (PARTIALLY RESOLVED — OQ-1/OQ-2 gated by spike, OQ-3 resolved)
 
-1. **`wait_exit_then_apply_updates` staging persistence past 60s timeout**
+> **Disposition (post-planning):** none of these are ignored — OQ-1 and OQ-2 are handled by the
+> **blocking spike checkpoint in Plan 02 Task 1** (`checkpoint:human-verify`), which finalizes
+> `src/update/apply.rs` from the spike outcome; OQ-3 is **RESOLVED** as Claude's Discretion
+> (default bearer auth, flagged for the Noren team at the start of execution).
+
+1. **[GATED → Plan 02 Task 1 spike] `wait_exit_then_apply_updates` staging persistence past 60s timeout**
    - What we know: The method spawns an updater process that waits up to 60s for graceful exit.
    - What's unclear: Does the staged `.nupkg` (downloaded by `download_updates()`) persist
      independently on disk even after the updater process times out? Or does the updater clean
@@ -795,7 +800,7 @@ async fn try_check_and_stage(
      (`%LocalAppData%\brevly-print\packages\`). If the `.nupkg` is there, the bootstrapper
      will apply it on next launch regardless of the updater process outcome.
 
-2. **Whether to call `wait_exit_then_apply_updates` immediately vs. at shutdown**
+2. **[GATED → resolved by OQ-1 outcome] Whether to call `wait_exit_then_apply_updates` immediately vs. at shutdown**
    - What we know: Calling immediately spawns a waiting updater process. Restaurant agent runs
      for hours. 60s timeout makes immediate call questionable.
    - What's unclear: If the stage persists (OQ1 answer = yes), calling at shutdown is simpler
@@ -804,7 +809,7 @@ async fn try_check_and_stage(
      `download_updates()` only, and `wait_exit_then_apply_updates` is called on process exit
      (e.g., in the "Sair" handler or a shutdown hook).
 
-3. **`/api/agent/version` authentication requirement**
+3. **[RESOLVED] `/api/agent/version` authentication requirement**
    - What we know: CONTEXT.md marks this as Claude's Discretion, defaulting to bearer auth.
    - What's unclear: Noren backend team's intent (public manifest vs. tenant-scoped).
    - Recommendation: Default to bearer auth in code; add a comment flagging the option to make
