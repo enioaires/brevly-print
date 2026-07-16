@@ -23,6 +23,8 @@ use brevly_print::{
     config_store,
     credential_store::{credential_store, CredentialError, CredentialStore as _},
     health_state::HealthState,
+    pusher::{run_pusher_loop, PrintEvent, PusherConfig},
+    noren_client::noren_base_url,
 };
 
 #[cfg(windows)]
@@ -81,6 +83,12 @@ struct App {
     activation_window: Option<ActivationWindow>,
     /// is_reactivation flag for ActivationWindow constructor.
     is_reactivation: bool,
+
+    // === Phase 4 additions ===
+    /// Receiver for Phase 5 print worker handoff. Held here so the channel is not dropped
+    /// (a dropped receiver would make every `tx.send` in the Pusher task fail). Phase 5
+    /// will take this out of `Option` and own the receiver.
+    _print_rx: Option<tokio::sync::mpsc::Receiver<PrintEvent>>,
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -318,6 +326,12 @@ fn main() -> anyhow::Result<()> {
         .context("Failed to open or migrate state.db")?;
     println!("[brevly-print] state.db migrated (user_version=1)");
 
+    // Enable WAL mode on the main App connection (Pitfall 5 — the Pusher task
+    // opens a second connection in WAL mode; both connections must agree on
+    // journal_mode for concurrent writes to be safe).
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .context("Failed to set WAL mode on main SQLite connection")?;
+
     // ── Credential check (ACT-07) ────────────────────────────────────────────
     // NotFound|Corrupt → activation window (first run or re-activation)
     // Ok(_)           → Runtime mode (already activated)
@@ -372,6 +386,57 @@ fn main() -> anyhow::Result<()> {
         }));
     }
 
+    // ── Phase 4: Pusher task wiring (Runtime mode only) ──────────────────────
+    //
+    // We capture is_runtime BEFORE `mode` and `cred_result` are moved into App.
+    // The Pusher spawn block requires an EventLoopProxy<UserEvent> (from create_proxy())
+    // and must run after the event_loop is built but before run_app().
+    let is_runtime = matches!(mode, AppMode::Runtime);
+
+    // mpsc channel for Phase 4 → Phase 5 PrintEvent handoff (D-03).
+    // The receiver is held in App._print_rx so the channel is not dropped;
+    // Phase 5 will take it out of Option and consume it.
+    let (print_tx, print_rx) = tokio::sync::mpsc::channel::<PrintEvent>(32);
+
+    if is_runtime {
+        // Read Pusher credentials from ConfigStore (D-01).
+        let pusher_key = config_store::get(&conn, "pusher_key")
+            .context("Failed to read pusher_key from ConfigStore")?
+            .unwrap_or_default();
+        let pusher_cluster = config_store::get(&conn, "pusher_cluster")
+            .context("Failed to read pusher_cluster from ConfigStore")?
+            .unwrap_or_default();
+        let tenant_id = config_store::get(&conn, "tenant_id")
+            .context("Failed to read tenant_id from ConfigStore")?
+            .unwrap_or_default();
+        let auth_url = config_store::get(&conn, "noren_base_url")
+            .context("Failed to read noren_base_url from ConfigStore")?
+            .unwrap_or_else(noren_base_url);
+
+        let pusher_config = PusherConfig { key: pusher_key, cluster: pusher_cluster, tenant_id, auth_url };
+
+        // Get agentToken from CredentialStore (D-02). On the Runtime path, cred_result is Ok.
+        let agent_token = match &cred_result {
+            Ok(bytes) => String::from_utf8(bytes.clone())
+                .context("agentToken bytes are not valid UTF-8")?,
+            Err(_) => String::new(), // unreachable on Runtime path (needs_activation=false)
+        };
+
+        // Health closure — Pusher task drives the tray via EventLoopProxy (C2).
+        // Never touches tray-icon APIs directly (Pitfall 4).
+        let proxy_for_pusher = event_loop.create_proxy();
+        let send_health = move |state: HealthState| {
+            let _ = proxy_for_pusher.send_event(UserEvent::HealthChanged(state));
+        };
+
+        let pusher_db_path = db_path.clone();
+        let pusher_http = http.clone();
+        let pusher_tx = print_tx.clone();
+        rt_handle.spawn(async move {
+            run_pusher_loop(pusher_config, agent_token, pusher_tx, send_health, pusher_db_path, pusher_http).await;
+        });
+    }
+
     let mut app = App {
         rt: rt_handle,
         http,
@@ -383,6 +448,7 @@ fn main() -> anyhow::Result<()> {
         #[cfg(windows)]
         tray_runtime: None,
         activation_window: None,
+        _print_rx: Some(print_rx),
     };
     event_loop.run_app(&mut app).context("Event loop error")?;
 
