@@ -50,7 +50,7 @@
   5. After saving, the agent exits the activation window, registers itself to start with Windows (HKCU Run), and the activation window does not appear again on subsequent launches
   6. After a Windows reinstall (DPAPI key loss), the agent detects the unreadable credential and re-enters the activation flow automatically
 **Plans**: 3 plans (2 waves)
-- [ ] 02-01-PLAN.md — Contracts + Linux-provable seams: noren_client (serial validation), Printer trait + Linux stub, machine_id, winreg dep, Wave-0 tests (ACT-03/04/05)
+- [x] 02-01-PLAN.md — Contracts + Linux-provable seams: noren_client (serial validation), Printer trait + Linux stub, machine_id, winreg dep, Wave-0 tests (ACT-03/04/05)
 - [ ] 02-02-PLAN.md — Windows hardware impls: WritePrinter RAW spooler (C1), serialport write, combined printer enumeration (ACT-04/05)
 - [ ] 02-03-PLAN.md — Activation window slice: startup credential branch, egui UI-SPEC form + async validation, test-print, save→DPAPI+SQLite+HKCU autostart→exit (ACT-01 PARTIAL, ACT-02/06/07/08)
 **UI hint**: yes
@@ -127,7 +127,7 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation + Thread Model Spike | 3/3 | Complete | 2026-07-15 |
-| 2. Activation | 0/3 | Planned | - |
+| 2. Activation | 1/3 | In Progress|  |
 | 3. Tray + Runtime + First Distributable | 0/0 | Not started | - |
 | 4. Pusher Event Stream | 0/0 | Not started | - |
 | 5. Job Pipeline | 0/0 | Not started | - |
