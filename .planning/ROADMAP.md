@@ -11,7 +11,7 @@
 
 - [x] **Phase 1: Foundation + Thread Model Spike** - Prove the `winit 0.30` + raw `egui` (egui-winit + egui-wgpu) event-loop integration; initialize SQLite schema (rusqlite_migration v1) and DPAPI credential infra
 - [x] **Phase 2: Activation** - One-time activation window with serial validation, printer selection, DPAPI credential storage, and autostart registration (completed 2026-07-16)
-- [ ] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer
+- [x] **Phase 3: Tray + Runtime + First Distributable** - Always-on tray agent with Win32/Tokio bridge, startup recovery, and first signed installer (completed 2026-07-16)
 - [ ] **Phase 4: Pusher Event Stream** - Hand-rolled Pusher WebSocket client with HMAC channel auth, ping/pong health check, and reconnect logic
 - [ ] **Phase 5: Job Pipeline** - End-to-end print path: event → fetch bytes → WritePrinter/serial → SQLite dedup → ack
 - [ ] **Phase 6: Resilience** - Printer-failure retry, Windows toast notifications, offline job pull, and boot-crash recovery
@@ -128,7 +128,7 @@
 |-------|----------------|--------|-----------|
 | 1. Foundation + Thread Model Spike | 3/3 | Complete | 2026-07-15 |
 | 2. Activation | 3/3 | Complete   | 2026-07-16 |
-| 3. Tray + Runtime + First Distributable | 1/3 | In Progress|  |
+| 3. Tray + Runtime + First Distributable | 3/3 | Complete   | 2026-07-16 |
 | 4. Pusher Event Stream | 0/0 | Not started | - |
 | 5. Job Pipeline | 0/0 | Not started | - |
 | 6. Resilience | 0/0 | Not started | - |
