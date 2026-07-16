@@ -128,7 +128,7 @@
 |-------|----------------|--------|-----------|
 | 1. Foundation + Thread Model Spike | 3/3 | Complete | 2026-07-15 |
 | 2. Activation | 3/3 | Complete   | 2026-07-16 |
-| 3. Tray + Runtime + First Distributable | 0/0 | Not started | - |
+| 3. Tray + Runtime + First Distributable | 1/3 | In Progress|  |
 | 4. Pusher Event Stream | 0/0 | Not started | - |
 | 5. Job Pipeline | 0/0 | Not started | - |
 | 6. Resilience | 0/0 | Not started | - |
