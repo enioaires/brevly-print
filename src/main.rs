@@ -425,7 +425,9 @@ fn main() -> anyhow::Result<()> {
         let agent_token = match &cred_result {
             Ok(bytes) => String::from_utf8(bytes.clone())
                 .context("agentToken bytes are not valid UTF-8")?,
-            Err(_) => String::new(), // unreachable on Runtime path (needs_activation=false)
+            Err(e) => unreachable!(
+                "Runtime path requires Ok credential, but got: {e}"
+            ),
         };
 
         // Health closure — Pusher task drives the tray via EventLoopProxy (C2).
