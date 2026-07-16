@@ -112,8 +112,37 @@ jobs:
             /tr http://timestamp.digicert.com /td SHA256 "$($setupExe.FullName)"
           Remove-Item $pfxPath
 
-      - name: Upload Setup.exe artifact
+      - name: Extract update artifact info for Noren /api/agent/version endpoint
+        id: update_info
+        shell: pwsh
+        run: |
+          # vpk produces assets.win.json listing artifacts (type, fileName, sha256) per artifact.
+          # [ASSUMED A5]: assets.win.json contains a sha256 field per asset. If absent, compute manually:
+          #   $sha256 = (Get-FileHash -Algorithm SHA256 $fullPkgPath).Hash.ToLower()
+          $assets = Get-Content Releases/assets.win.json | ConvertFrom-Json
+          $fullPkg = $assets.assets | Where-Object { $_.type -eq "Full" } | Select-Object -First 1
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          # Use sha256 from assets.win.json if present; fall back to Get-FileHash.
+          if ($fullPkg.sha256) {
+            $sha256 = $fullPkg.sha256
+          } else {
+            $fullPkgPath = Join-Path "Releases" $fullPkg.fileName
+            $sha256 = (Get-FileHash -Algorithm SHA256 $fullPkgPath).Hash.ToLower()
+          }
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "filename=$($fullPkg.fileName)" >> $env:GITHUB_OUTPUT
+          echo "sha256=$sha256" >> $env:GITHUB_OUTPUT
+          echo "--- Noren /api/agent/version payload ---"
+          echo "{ version: $version, downloadUrl: '<S3_BASE>/$($fullPkg.fileName)', sha256: $sha256 }"
+          # NOTE: Actual S3/Cloudflare upload + /api/agent/version endpoint wiring is a
+          # Noren-backend dependency (D-06). The upload step is intentionally absent here.
+
+      - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: brevly-print-setup
-          path: Releases/*Setup.exe
+          name: brevly-print-release
+          path: |
+            Releases/*Setup.exe
+            Releases/*.nupkg
+            Releases/releases.win.json
+            Releases/assets.win.json
