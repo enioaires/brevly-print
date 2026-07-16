@@ -24,8 +24,10 @@ use brevly_print::{
     credential_store::{credential_store, CredentialError, CredentialStore as _},
     health_state::HealthState,
     print_worker::run_print_worker,
+    printer::{printer_from_entry, PrinterId},
     pusher::{run_pusher_loop, PrintEvent, PusherConfig},
     noren_client::noren_base_url,
+    retry_task::run_retry_task,
 };
 
 #[cfg(windows)]
@@ -427,6 +429,33 @@ fn main() -> anyhow::Result<()> {
         let worker_db_path = db_path.clone();
         let worker_http = http.clone();
 
+        // Phase 6: construct a second Box<dyn Printer> for the retry task (D-03 / Pitfall 4).
+        // The retry task and print worker each hold their own Box<dyn Printer>; each impl
+        // opens its own handle on every print_raw() call, so two concurrent calls are safe.
+        //
+        // If printer_name is missing/empty, skip spawning the retry task — activation is
+        // incomplete and the print worker already hard-errors on missing printer.
+        let retry_printer_name = config_store::get(&conn, "printer_name")
+            .unwrap_or(None)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default();
+        let retry_printer_type = config_store::get(&conn, "printer_type")
+            .unwrap_or(None)
+            .unwrap_or_default();
+        let retry_printer_id = if retry_printer_type == "serial" {
+            PrinterId::Serial(retry_printer_name.clone())
+        } else {
+            PrinterId::Spooler(retry_printer_name.clone())
+        };
+        let has_retry_printer = !retry_printer_name.is_empty();
+        let printer_for_retry = printer_from_entry(&retry_printer_id);
+
+        // Health closure for the retry task — same EventLoopProxy pattern as Pusher (D-03).
+        let proxy_for_retry = event_loop.create_proxy();
+        let retry_send_health = move |state: HealthState| {
+            let _ = proxy_for_retry.send_event(UserEvent::HealthChanged(state));
+        };
+
         let pusher_config = PusherConfig { key: pusher_key, cluster: pusher_cluster, tenant_id, auth_url };
 
         // Get agentToken from CredentialStore (D-02). On the Runtime path, cred_result is Ok.
@@ -440,6 +469,14 @@ fn main() -> anyhow::Result<()> {
 
         // Clone agent_token for the print worker BEFORE it is moved into the pusher spawn.
         let worker_token = agent_token.clone();
+
+        // Phase 6: clone values for retry task before agent_token moves into pusher spawn.
+        // Use worker_base_url (already cloned from auth_url) rather than auth_url itself,
+        // which is moved into pusher_config above.
+        let retry_token = agent_token.clone();
+        let retry_base_url = worker_base_url.clone();
+        let retry_db_path = db_path.clone();
+        let retry_http = http.clone();
 
         // Health closure — Pusher task drives the tray via EventLoopProxy (C2).
         // Never touches tray-icon APIs directly (Pitfall 4).
@@ -459,6 +496,23 @@ fn main() -> anyhow::Result<()> {
         rt_handle.spawn(async move {
             run_print_worker(print_rx, worker_token, worker_base_url, worker_db_path, worker_http).await;
         });
+
+        // Phase 6: spawn retry task — fourth Tokio task (D-03).
+        // Skip if printer is not configured (activation incomplete — print worker also hard-errors).
+        if has_retry_printer {
+            rt_handle.spawn(async move {
+                run_retry_task(
+                    retry_db_path,
+                    retry_token,
+                    retry_base_url,
+                    retry_http,
+                    printer_for_retry,
+                    retry_send_health,
+                ).await;
+            });
+        } else {
+            eprintln!("[brevly-print] Main: printer not configured — retry task not spawned");
+        }
 
         // Drop original sender — only pusher_tx (moved into the task) keeps the
         // channel open. When the Pusher task exits, rx.recv() returns None (Phase 5).
