@@ -26,6 +26,13 @@ put('brevly-print/BrevlyPrint-Setup.exe', fs.readFileSync(file), {
 	allowOverwrite: true, // replace the previous release's installer
 	contentType: 'application/octet-stream', // force a download of the .exe
 	token: process.env.BLOB_READ_WRITE_TOKEN,
+	// The Setup.exe is large (bundled Rust/wgpu binary). A single-request PUT is
+	// unreliable at this size — the plain path retried for 23m then threw a generic
+	// BlobUnknownError. multipart splits into >=5MB parts, uploads in parallel and
+	// retries failed parts individually, which is what a big installer needs.
+	multipart: true,
+	onUploadProgress: ({ percentage }) =>
+		console.log(`upload ${percentage.toFixed(0)}%`),
 })
 	.then((r) => console.log('AGENT_SETUP_URL=' + r.url))
 	.catch((e) => {
