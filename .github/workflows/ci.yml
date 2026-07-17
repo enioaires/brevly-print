@@ -148,3 +148,23 @@ jobs:
             Releases/*.nupkg
             Releases/releases.win.json
             Releases/assets.win.json
+
+      # Publish the installer to the Noren project's Vercel Blob so noren.app.br/print
+      # (a public redirect route) always points at the latest Setup.exe — no GitHub login
+      # needed to install at a restaurant. Runs only on push to main (not PRs). Skips cleanly
+      # when BLOB_READ_WRITE_TOKEN is absent (e.g. forks) so the build never fails for it.
+      # Stable path + allowOverwrite → the public URL never changes; set AGENT_SETUP_URL to it once.
+      - name: Publish installer to Vercel Blob (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: |
+          if (-not $env:BLOB_READ_WRITE_TOKEN) {
+            Write-Host "BLOB_READ_WRITE_TOKEN not set — skipping installer publish (expected on forks)."
+            exit 0
+          }
+          $setup = Get-ChildItem Releases -Filter "*Setup.exe" | Select-Object -First 1
+          if (-not $setup) { Write-Error "No Setup.exe found in Releases/ — vpk pack may have failed."; exit 1 }
+          npm install @vercel/blob@1 --no-save --no-audit --no-fund --silent
+          node .github/scripts/blob-upload.cjs $setup.FullName
